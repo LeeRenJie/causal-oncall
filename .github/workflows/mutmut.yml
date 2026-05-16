@@ -1,0 +1,73 @@
+name: mutmut
+
+on:
+  schedule:
+    # Sunday 18:00 UTC — runs before the Monday checkpoint so the team
+    # has fresh mutation results to triage at the week's first standup.
+    - cron: "0 18 * * 0"
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    name: mutation testing (kill-rate >= 80%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run mutmut on critical-path modules
+        run: |
+          # `mutmut run` exits non-zero only on internal errors. We compute
+          # the kill rate ourselves below.
+          mutmut run --no-progress || true
+
+      - name: Compute kill rate and fail if < 80%
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          raw = subprocess.check_output(["mutmut", "results", "--json"], text=True)
+          data = json.loads(raw)
+
+          killed = len(data.get("killed", []))
+          survived = len(data.get("survived", []))
+          timed_out = len(data.get("timeout", []))
+          suspicious = len(data.get("suspicious", []))
+
+          # Surviving mutants = coverage holes. Timeouts and suspicious
+          # outcomes count against us; they signal flaky or slow tests
+          # that can't reliably kill mutations.
+          total = killed + survived + timed_out + suspicious
+          if total == 0:
+              print("no mutants generated; mutmut likely misconfigured")
+              sys.exit(1)
+
+          kill_rate = killed / total
+          print(f"killed={killed} survived={survived} timeout={timed_out} suspicious={suspicious}")
+          print(f"kill rate = {kill_rate:.2%} (gate = 80%)")
+
+          if kill_rate < 0.80:
+              sys.exit(1)
+          PY
+
+      - name: Upload mutmut report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-report
+          path: |
+            .mutmut-cache
+          retention-days: 30

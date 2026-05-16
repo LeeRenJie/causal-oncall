@@ -1,0 +1,41 @@
+# Keep the build context lean. Anything excluded here never gets COPY'd
+# into the image and never ends up cached in a build layer.
+
+# Tests, dev configs, CI definitions.
+tests/
+.github/
+.pre-commit-config.yaml
+
+# All markdown except README + LICENSE (judges may read those at runtime
+# if they curl the image, and uvicorn's autodocs cross-reference README).
+*.md
+!README.md
+
+# Local env, caches, IDE, OS junk.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Git history is not needed inside the container.
+.git/
+.gitignore
+.gitattributes
+
+# Mutation testing artifacts.
+.mutmut-cache
+
+# Node — only needed at runtime via npx, never copied from the host.
+node_modules/

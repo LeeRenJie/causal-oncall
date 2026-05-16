@@ -1,0 +1,39 @@
+# Pre-commit runs the cheap quality gates locally so CI rarely fails on
+# something a developer could have caught in <1s. Heavier gates (full
+# coverage run, mutmut) live in GitHub Actions.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+
+  # Run the fast unit subset on push, not on every commit, so red-green-refactor
+  # at the keyboard stays fast. CI still runs the full pyramid on the PR.
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest (unit only, no cov gate)
+        entry: python -m pytest tests/unit -q --no-cov -x
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

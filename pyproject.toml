@@ -1,0 +1,159 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "causal-oncall"
+version = "0.1.0"
+description = "Multi-agent SRE pre-mortem for Dynatrace problems. Produces a ranked causal hypothesis brief within 90 seconds of a problem opening."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "Lee Ren Jie" }]
+keywords = ["dynatrace", "sre", "incident-response", "agent", "gemini", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Monitoring",
+]
+
+dependencies = [
+    # Web framework for the Cloud Run webhook entrypoint.
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+
+    # Google ADK + Vertex AI SDK for Gemini 3.1.
+    "google-adk>=0.3.0",
+    "google-cloud-aiplatform>=1.71.0",
+    "google-genai>=0.4.0",
+
+    # MongoDB Atlas driver — operational store + vector search.
+    "pymongo>=4.10.0",
+
+    # Slack delivery.
+    "slack-sdk>=3.33.0",
+
+    # Arize Phoenix OSS SDK for tracing/eval (not MCP).
+    "arize-phoenix-otel>=0.6.0",
+    "openinference-instrumentation>=0.1.20",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+
+    # Misc.
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.1",
+    "tenacity>=9.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.7.0",
+    "black>=24.10.0",
+    "mutmut>=3.2.0",
+    "pre-commit>=4.0.0",
+    "respx>=0.21.0",
+    "mongomock>=4.3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/leerenjie/causal-oncall"
+Issues = "https://github.com/leerenjie/causal-oncall/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"causal_oncall" = ["py.typed"]
+
+# ----------------------------------------------------------------------
+# Pytest — drives the 4-layer test pyramid + coverage gate.
+# ----------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=causal_oncall",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-fail-under=100",
+]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests slower than ~1s (deselect with -m 'not slow')",
+    "e2e: full demo-path replay; requires fixtures only, no live creds",
+    "requires_creds: contract tests against live Dynatrace / Mongo; skipped without env",
+]
+
+# ----------------------------------------------------------------------
+# Coverage — 100% line + branch on the critical-path package.
+# Glue layers excluded selectively via `# pragma: no cover` inline.
+# ----------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["causal_oncall"]
+omit = [
+    # FastAPI uvicorn wiring is framework boilerplate; behaviour is exercised
+    # end-to-end by tests/e2e/test_demo_path.py rather than unit tests.
+    "src/causal_oncall/app.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 100
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+]
+
+# ----------------------------------------------------------------------
+# Ruff + Black — formatting and lint.
+# ----------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "SIM",           # simplify
+    "RUF",           # ruff-specific
+]
+ignore = [
+    "E501",  # line length handled by black
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011"]  # tests legitimately use `assert`
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+# ----------------------------------------------------------------------
+# Mutmut — weekly mutation testing on critical-path code only.
+# ----------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = "src/causal_oncall"
+runner = "python -m pytest -x --no-cov -q"
+tests_dir = "tests"

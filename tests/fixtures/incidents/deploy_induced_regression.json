@@ -1,0 +1,40 @@
+{
+  "_fixture_meta": {
+    "description": "A clean deploy-correlation case: error rate jumps within 30s of deploy v98 to checkout-service. Tests that the deploy_correlation specialist dominates ranking when its evidence is strongest.",
+    "expected_top_hypothesis_key": "deploy_regression",
+    "expected_supporting_specialists": ["deploy_correlation", "triage", "topology"],
+    "expected_dynatrace_problem_id_in_brief": "-9223372036854775805_v2"
+  },
+  "problemId": "-9223372036854775805_v2",
+  "displayId": "P-2026-05-15-007",
+  "title": "Failure rate increase",
+  "status": "OPEN",
+  "severityLevel": "ERROR",
+  "impactLevel": "SERVICE",
+  "startTime": "2026-05-15T11:02:00Z",
+  "affectedEntities": [
+    {
+      "entityId": {"id": "SERVICE-CHK456", "type": "SERVICE"},
+      "name": "checkout-service",
+      "type": "SERVICE"
+    }
+  ],
+  "evidenceDetails": {
+    "totalCount": 2,
+    "evidence": [
+      {
+        "evidenceType": "EVENT",
+        "displayName": "Deployment detected on checkout-service",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-15T11:01:30Z",
+        "data": {"deployment.version": "v98", "deployment.author": "ci-bot"}
+      },
+      {
+        "evidenceType": "METRIC",
+        "displayName": "failure rate",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-15T11:02:00Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "_fixture_meta": {
+    "description": "A cascading-failure case where the surface alert is on cart-service but the actual culprit is its upstream inventory-service. Tests that the Topology specialist surfaces the upstream-attribution hypothesis.",
+    "expected_top_hypothesis_key": "upstream_dependency_failure",
+    "expected_supporting_specialists": ["topology", "triage", "anomaly_window"],
+    "expected_dynatrace_problem_id_in_brief": "-9223372036854775803_v2"
+  },
+  "problemId": "-9223372036854775803_v2",
+  "displayId": "P-2026-05-13-031",
+  "title": "Slow response on cart-service",
+  "status": "OPEN",
+  "severityLevel": "PERFORMANCE",
+  "impactLevel": "APPLICATION",
+  "startTime": "2026-05-13T18:42:00Z",
+  "affectedEntities": [
+    {
+      "entityId": {"id": "SERVICE-CART111", "type": "SERVICE"},
+      "name": "cart-service",
+      "type": "SERVICE"
+    }
+  ],
+  "evidenceDetails": {
+    "totalCount": 1,
+    "evidence": [
+      {
+        "evidenceType": "METRIC",
+        "displayName": "downstream call latency: inventory-service",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-13T18:41:30Z"
+      }
+    ]
+  }
+}

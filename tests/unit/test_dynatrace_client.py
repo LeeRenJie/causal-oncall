@@ -1,0 +1,168 @@
+"""TDD spec for DynatraceClient.
+
+The client is the only door to Dynatrace; its behaviors below are
+load-bearing for the agent's safety. Real MCP I/O is faked at the
+``_MCPProcess`` protocol level so these tests stay deterministic.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from causal_oncall.domain.exceptions import DynatraceUnavailable, RateLimited
+from causal_oncall.dynatrace_client import (
+    DQLPlan,
+    DynatraceClient,
+    DynatraceClientConfig,
+)
+
+
+def _cfg(**overrides) -> DynatraceClientConfig:
+    base = dict(
+        base_url="https://abc.live.dynatrace.com",
+        oauth_client_id="cid",
+        oauth_client_secret="sec",
+        oauth_token_url="https://sso.dynatrace.com/sso/oauth2/token",
+        rate_limit_per_minute=50,
+        max_retries=3,
+    )
+    base.update(overrides)
+    return DynatraceClientConfig(**base)
+
+
+class _ScriptedMCP:
+    """Per-test MCP fake. Calls return values in order, then raise."""
+
+    def __init__(self, scripted: list[Any]) -> None:
+        self._scripted = list(scripted)
+        self.calls: list[tuple[str, dict]] = []
+
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        self.calls.append((name, arguments))
+        if not self._scripted:
+            raise AssertionError(f"MCP fake exhausted on call {name!r}")
+        item = self._scripted.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def close(self) -> None: ...
+
+
+def test_get_problem_context_returns_typed_problem_context(monkeypatch):
+    mcp = _ScriptedMCP(
+        [
+            {  # get_problem_details
+                "problemId": "P-1",
+                "title": "latency spike",
+                "severityLevel": "PERFORMANCE",
+                "startTime": "2026-05-17T09:30:00Z",
+                "affectedEntities": [
+                    {"entityId": {"id": "SERVICE-ABC"}, "type": "SERVICE"}
+                ],
+            },
+            {  # impacted-entities DQL
+                "records": [{"entity.id": "SERVICE-ABC", "entity.name": "payment"}]
+            },
+            {  # event-window DQL
+                "records": [{"event": "deploy", "ts": "2026-05-17T09:25:00Z"}]
+            },
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    # The implementation under TDD will accept dependency injection of
+    # the MCP process; tests rely on that seam.
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    ctx = client.get_problem_context("P-1")
+    assert ctx.signature.problem_id == "P-1"
+    assert any(e.get("entity.id") == "SERVICE-ABC" for e in ctx.impacted_entities)
+
+
+def test_execute_dql_retries_on_transient_429_with_exponential_backoff(monkeypatch):
+    transient = RateLimited("429", retry_after_seconds=0.01)
+    mcp = _ScriptedMCP(
+        [
+            transient,
+            transient,
+            {"records": [{"x": 1}]},  # third call succeeds
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    result = client.execute_dql(DQLPlan(query="fetch logs"))
+    assert result.rows  # third try produced data
+    assert len(mcp.calls) == 3
+
+
+def test_execute_dql_gives_up_after_max_retries_and_raises_rate_limited(monkeypatch):
+    mcp = _ScriptedMCP([RateLimited("429")] * 10)
+    client = DynatraceClient(_cfg(max_retries=2))
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    with pytest.raises(RateLimited):
+        client.execute_dql(DQLPlan(query="fetch logs"))
+
+
+def test_execute_dql_maps_unknown_mcp_error_to_dynatrace_unavailable(monkeypatch):
+    mcp = _ScriptedMCP([RuntimeError("mcp stdio broken")])
+    client = DynatraceClient(_cfg(max_retries=0))
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    with pytest.raises(DynatraceUnavailable):
+        client.execute_dql(DQLPlan(query="fetch logs"))
+
+
+def test_get_topology_neighbors_respects_depth(monkeypatch):
+    mcp = _ScriptedMCP(
+        [
+            {
+                "neighbors": [
+                    {"entityId": "S1", "type": "SERVICE", "name": "n1", "distance": 1},
+                    {"entityId": "S2", "type": "SERVICE", "name": "n2", "distance": 2},
+                ]
+            }
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    neighbors = client.get_topology_neighbors("SERVICE-ABC", depth=2)
+    # All returned entities must have distance <= depth.
+    assert all(n.distance <= 2 for n in neighbors)
+
+
+def test_repeated_get_problem_context_is_cached_within_one_client(monkeypatch):
+    mcp = _ScriptedMCP(
+        [
+            {
+                "problemId": "P-1",
+                "title": "x",
+                "severityLevel": "ERROR",
+                "startTime": "2026-05-17T09:30:00Z",
+                "affectedEntities": [],
+            },
+            {"records": []},
+            {"records": []},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    a = client.get_problem_context("P-1")
+    b = client.get_problem_context("P-1")
+    assert a is b or a == b
+    # Only one hydration round-trip even though we asked twice.
+    detail_calls = [c for c in mcp.calls if c[0] == "get_problem_details"]
+    assert len(detail_calls) == 1
+
+
+def test_tool_allowlist_rejects_calls_to_unlisted_tools(monkeypatch):
+    client = DynatraceClient(_cfg(tool_allowlist=("execute_dql",)))
+    # Posting a comment is not in the allowlist — must refuse rather than
+    # silently call into the MCP server with a banned tool name.
+    with pytest.raises(PermissionError):
+        client.post_problem_comment("P-1", "hello")

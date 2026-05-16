@@ -1,0 +1,39 @@
+{
+  "_fixture_meta": {
+    "description": "A pure pool-exhaustion incident with no deploy correlation — proves the agent can land on db_pool_exhaustion from anomaly evidence alone.",
+    "expected_top_hypothesis_key": "db_pool_exhaustion",
+    "expected_supporting_specialists": ["triage", "anomaly_window", "topology"],
+    "expected_dynatrace_problem_id_in_brief": "-9223372036854775806_v2"
+  },
+  "problemId": "-9223372036854775806_v2",
+  "displayId": "P-2026-05-12-014",
+  "title": "Service unavailable: payment-service",
+  "status": "OPEN",
+  "severityLevel": "AVAILABILITY",
+  "impactLevel": "SERVICE",
+  "startTime": "2026-05-12T14:00:00Z",
+  "affectedEntities": [
+    {
+      "entityId": {"id": "SERVICE-ABC123", "type": "SERVICE"},
+      "name": "payment-service",
+      "type": "SERVICE"
+    }
+  ],
+  "evidenceDetails": {
+    "totalCount": 2,
+    "evidence": [
+      {
+        "evidenceType": "METRIC",
+        "displayName": "active DB connections",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-12T13:58:30Z"
+      },
+      {
+        "evidenceType": "METRIC",
+        "displayName": "DB connection wait time",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-12T13:58:35Z"
+      }
+    ]
+  }
+}

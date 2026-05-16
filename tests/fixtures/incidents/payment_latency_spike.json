@@ -1,0 +1,49 @@
+{
+  "_fixture_meta": {
+    "description": "The canonical demo incident. Payment-service p95 latency triples after deploy v412 introduces a synchronous call inside a DB transaction, exhausting the HikariCP pool.",
+    "expected_top_hypothesis_key": "db_pool_exhaustion",
+    "expected_supporting_specialists": ["triage", "deploy_correlation", "anomaly_window"],
+    "expected_dynatrace_problem_id_in_brief": "-9223372036854775807_v2"
+  },
+  "problemId": "-9223372036854775807_v2",
+  "displayId": "P-2026-05-17-001",
+  "title": "Response time degradation",
+  "status": "OPEN",
+  "severityLevel": "PERFORMANCE",
+  "impactLevel": "SERVICE",
+  "startTime": "2026-05-17T09:30:00Z",
+  "affectedEntities": [
+    {
+      "entityId": {"id": "SERVICE-ABC123", "type": "SERVICE"},
+      "name": "payment-service",
+      "type": "SERVICE"
+    },
+    {
+      "entityId": {"id": "PROCESS_GROUP-XYZ789", "type": "PROCESS_GROUP"},
+      "name": "payment-service-pg",
+      "type": "PROCESS_GROUP"
+    }
+  ],
+  "rootCauseEntity": null,
+  "managementZones": [
+    {"id": "1234", "name": "production"}
+  ],
+  "evidenceDetails": {
+    "totalCount": 3,
+    "evidence": [
+      {
+        "evidenceType": "METRIC",
+        "displayName": "p95 response time",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-17T09:28:00Z"
+      },
+      {
+        "evidenceType": "EVENT",
+        "displayName": "Deployment detected on payment-service",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-17T09:25:00Z",
+        "data": {"deployment.version": "v412"}
+      }
+    ]
+  }
+}

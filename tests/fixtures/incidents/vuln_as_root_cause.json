@@ -1,0 +1,34 @@
+{
+  "_fixture_meta": {
+    "description": "The under-investigated vulnerability-as-root-cause pattern: a freshly-active CVE on the auth-service process opens the door to a downstream incident. Tests the Vuln/Sec specialist's edge case.",
+    "expected_top_hypothesis_key": "vulnerability_exploited",
+    "expected_supporting_specialists": ["vuln_sec", "triage"],
+    "expected_dynatrace_problem_id_in_brief": "-9223372036854775804_v2"
+  },
+  "problemId": "-9223372036854775804_v2",
+  "displayId": "P-2026-05-16-022",
+  "title": "Anomalous outbound traffic from auth-service",
+  "status": "OPEN",
+  "severityLevel": "ERROR",
+  "impactLevel": "SERVICE",
+  "startTime": "2026-05-16T03:14:00Z",
+  "affectedEntities": [
+    {
+      "entityId": {"id": "SERVICE-AUTH789", "type": "SERVICE"},
+      "name": "auth-service",
+      "type": "SERVICE"
+    }
+  ],
+  "evidenceDetails": {
+    "totalCount": 1,
+    "evidence": [
+      {
+        "evidenceType": "VULNERABILITY",
+        "displayName": "CVE-2026-12345 active on auth-service jvm",
+        "rootCauseRelevant": true,
+        "startTime": "2026-05-16T03:00:00Z",
+        "data": {"cve": "CVE-2026-12345", "cvss": 9.1, "exploitable": true}
+      }
+    ]
+  }
+}
