@@ -173,4 +173,44 @@ cd causal-oncall
 - "Triage may need Flash→Pro" candidate from W1-postmortem not triggered — Triage's hypothesis-key emission ("db_pool_exhaustion") is deterministic from the fixture; we don't see >20% quality regression yet because no live MCP responses are flowing. Re-evaluate after the cassette re-record.
 - All 5 specialists currently hardcode `hypothesis_key="db_pool_exhaustion"` (or `"cve_exposure"` for VulnSec) for their primary stance. This is fine for the demo fixture but will need real DQL→hypothesis mapping in W3. Logging as a W2-postmortem candidate.
 
+---
+
+### W2-S2 — live SSE trace UI for multi-agent reasoning — 2026-05-20
+
+**Commit:** (this commit)
+
+**Built:** Two new modules — `TraceBroadcaster` (in-memory pub/sub keyed on problem_id; publish-subscribe with per-subscriber asyncio.Queue, clean cleanup on consumer disconnect, sentinel-based close for terminal events) and `trace_routes` (the SSE-frame generator + single-page HTML renderer). Orchestrator gains an optional `trace_broadcaster` constructor parameter; when wired, it emits `orchestrator-started → memory-short-circuit?/(specialist-dispatched, specialist-completed)×N → synthesizer-started → brief-ready` events through the broadcaster, then closes the stream. `app.py` exposes two new routes: `GET /trace/{problem_id}` (returns the HTML trace page) and `GET /webhook/dynatrace-problem/stream/{problem_id}` (returns a StreamingResponse over the SSE frames). The HTML trace page is vanilla — no React, no Vite, no socket.io, no external CDN deps; one `<script>` block with `EventSource` listeners, color-coded per event kind. Wow moment #1 (cold incident → 90-sec brief) is now visually demonstrable: open `/trace/<id>` in one tab, fire the webhook in another, watch the 5 specialists appear in real time.
+
+**Decisions made:**
+- **SSE over WebSocket**: per PLAN W2-S2 done-means — one-way, works behind every corporate proxy, no socket.io dependency, FastAPI `StreamingResponse` is one line.
+- **`trace_broadcaster` is optional on Orchestrator**: keeps the W1 default code path (and every existing test) working without modification. Test `test_orchestrator_without_broadcaster_runs_silently` pins this contract.
+- **HTML template is one Python string in `trace_routes.py`**, no Jinja, no separate file. Stays inside the coverage gate (the renderer function is tested; the static HTML template is logically a constant — covered via the rendered output assertions).
+- **`# pragma: no cover` reason on the HTML template**: zero — the template is a Python string constant, executed as data. The renderer function around it gets full coverage.
+- **Webhook response now includes `trace_url`** so the curl response can deep-link to the live trace page (handy for the demo narration: "and here's the live trace at `/trace/<id>`").
+- **No live uvicorn smoke** during this build (sandboxed away from binding sockets); the SSE handler is exercised end-to-end at the function level by `tests/unit/test_trace_routes.py::test_stream_sse_for_problem_yields_each_event_as_an_sse_frame` — same code path, no HTTP layer between the test and the generator.
+
+**Test count + coverage:** 139 unit + integration + 2 contract passing (+24 from W2-S0 baseline), 3 skipped. 100% line + branch coverage on every critical-path module including `trace_broadcaster.py` and `trace_routes.py`.
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m pytest tests/unit/test_trace_broadcaster.py tests/unit/test_trace_routes.py tests/unit/test_orchestrator.py -v
+```
+
+**Manual smoke (to run when next at the terminal):**
+```
+CAUSAL_ONCALL_DEV_MODE=1 .venv/Scripts/python.exe -m uvicorn causal_oncall.app:app --host 127.0.0.1 --port 8080
+# tab 1: open http://127.0.0.1:8080/trace/-9223372036854775807_v2 in browser
+# tab 2: curl -X POST http://127.0.0.1:8080/webhook/dynatrace-problem \
+#          -H "content-type: application/json" \
+#          -d @tests/fixtures/incidents/payment_latency_spike.json
+```
+
+**Demo path impact:** updates the demo path — the curl response now includes `trace_url`. Demo beat 0:20–0:50 ("live trace UI shows 5 specialists firing") now has a real artifact. Will update `DEMO-SCRIPT.md` in W4-S2.
+
+**Postmortem flags:**
+- The SSE stream emits one event per specialist lifecycle moment, but the orchestrator currently runs **synchronously** in the webhook request handler — meaning the curl call returns AFTER the brief is fully rendered, and the trace stream is best viewed by opening the trace URL *before* triggering the webhook. For the demo this is fine; for production we'd push the orchestrator work to a background task. Logging as a W3 backlog item.
+- The HTML template lives inline in Python — when it grows past ~150 lines, promote to a Jinja template or a standalone `.html` file under `src/causal_oncall/static/`. Tracking as a deep-module-health postmortem item.
+
 

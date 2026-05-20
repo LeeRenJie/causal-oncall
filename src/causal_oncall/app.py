@@ -23,7 +23,7 @@ from dataclasses import dataclass  # pragma: no cover
 from pathlib import Path  # pragma: no cover
 
 from fastapi import FastAPI, Request  # pragma: no cover
-from fastapi.responses import JSONResponse  # pragma: no cover
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # pragma: no cover
 
 from causal_oncall.curator import Curator, CuratorConfig  # pragma: no cover
 from causal_oncall.dynatrace_client import (  # pragma: no cover
@@ -42,6 +42,11 @@ from causal_oncall.specialists import (  # pragma: no cover
     VulnSecSpecialist,
 )
 from causal_oncall.synthesizer import Synthesizer, SynthesizerConfig  # pragma: no cover
+from causal_oncall.trace_broadcaster import TraceBroadcaster  # pragma: no cover
+from causal_oncall.trace_routes import (  # pragma: no cover
+    render_trace_page,
+    stream_sse_for_problem,
+)
 
 BRIEFS_DIR = Path(os.environ.get("BRIEFS_OUTPUT_DIR", "./out/briefs"))  # pragma: no cover
 
@@ -54,6 +59,7 @@ class _Wiring:
     slack: SlackNotifier | None
     dynatrace: DynatraceClient | None
     curator: Curator | None
+    trace_broadcaster: TraceBroadcaster
 
 
 def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boot
@@ -99,6 +105,7 @@ def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boo
         )
     )
 
+    broadcaster = TraceBroadcaster()
     orchestrator = Orchestrator(
         memory=memory,
         specialists=[
@@ -113,6 +120,7 @@ def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boo
         config=OrchestratorConfig(
             memory_match_threshold=float(os.environ.get("MEMORY_MATCH_THRESHOLD", "0.85")),
         ),
+        trace_broadcaster=broadcaster,
     )
 
     slack = SlackNotifier(
@@ -125,7 +133,13 @@ def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boo
 
     curator = Curator(memory=memory, config=CuratorConfig())
 
-    return _Wiring(orchestrator=orchestrator, slack=slack, dynatrace=dynatrace, curator=curator)
+    return _Wiring(
+        orchestrator=orchestrator,
+        slack=slack,
+        dynatrace=dynatrace,
+        curator=curator,
+        trace_broadcaster=broadcaster,
+    )
 
 
 def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local curl demo
@@ -226,14 +240,22 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
         VulnSecSpecialist(fd),  # type: ignore[arg-type]
     ]
 
+    broadcaster = TraceBroadcaster()
     orch = Orchestrator(
         memory=FakeMemoryStore(),  # type: ignore[arg-type]
         specialists=specialists,
         synthesizer=synthesizer,
         tracer=FakePhoenixTracer(),  # type: ignore[arg-type]
         config=OrchestratorConfig(),
+        trace_broadcaster=broadcaster,
     )
-    return _Wiring(orchestrator=orch, slack=None, dynatrace=None, curator=None)
+    return _Wiring(
+        orchestrator=orch,
+        slack=None,
+        dynatrace=None,
+        curator=None,
+        trace_broadcaster=broadcaster,
+    )
 
 
 def _build_wiring() -> _Wiring:  # pragma: no cover  # router based on env mode
@@ -277,6 +299,7 @@ async def webhook_dynatrace_problem(request: Request) -> JSONResponse:
     response = {
         "brief_id": brief.problem_id,
         "brief_url": f"/briefs/{brief.problem_id}.md",
+        "trace_url": f"/trace/{brief.problem_id}",
         "top_recommendation": brief.top_recommendation,
         "ranked_hypotheses": [
             {"rank": h.rank, "key": h.key, "title": h.title, "score": h.score}
@@ -298,3 +321,21 @@ async def webhook_dynatrace_problem(request: Request) -> JSONResponse:
 @app.post("/webhook/dynatrace/problem-open")  # pragma: no cover
 async def problem_open(request: Request) -> JSONResponse:
     return await webhook_dynatrace_problem(request)
+
+
+@app.get("/trace/{problem_id}")  # pragma: no cover  # W2-S2 live trace UI
+async def trace_page(problem_id: str) -> HTMLResponse:
+    return HTMLResponse(render_trace_page(problem_id))
+
+
+@app.get("/webhook/dynatrace-problem/stream/{problem_id}")  # pragma: no cover
+async def trace_stream(problem_id: str) -> StreamingResponse:
+    wiring: _Wiring = app.state.wiring
+    return StreamingResponse(
+        stream_sse_for_problem(wiring.trace_broadcaster, problem_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disable nginx/proxy buffering
+        },
+    )

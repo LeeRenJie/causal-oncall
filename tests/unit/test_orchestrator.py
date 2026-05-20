@@ -241,3 +241,111 @@ def test_replan_with_unknown_brief_id_falls_back_to_strip_only():
     stranger_brief = make_brief(problem_id="P-UNKNOWN", hypotheses=(h_a, h_b))
     replanned = orch.reject_hypothesis_and_replan(stranger_brief, "a")
     assert {h.key for h in replanned.ranked_hypotheses} == {"b"}
+
+
+# ---------- W2-S2: live trace broadcasting ----------
+
+
+def _make_orchestrator_with_broadcaster(specialists=None, memory=None, synthesizer=None):
+    from causal_oncall.trace_broadcaster import TraceBroadcaster
+
+    bus = TraceBroadcaster()
+    captured: list[tuple[str, str, dict]] = []
+    bus._on_publish_hook = lambda pid, ev: captured.append((pid, ev.kind, dict(ev.data)))
+
+    from causal_oncall.orchestrator import Orchestrator, OrchestratorConfig
+
+    orch = Orchestrator(
+        memory=memory or FakeMemoryStore(),
+        specialists=specialists or [_StubSpecialist("triage", make_evidence(specialist="triage"))],
+        synthesizer=synthesizer or FakeSynthesizer(),
+        tracer=FakePhoenixTracer(),
+        config=OrchestratorConfig(),
+        trace_broadcaster=bus,
+    )
+    return orch, bus, captured
+
+
+def test_orchestrator_emits_lifecycle_events_for_each_specialist():
+    triage = _StubSpecialist("triage", make_evidence(specialist="triage"))
+    topo = _StubSpecialist("topology", make_evidence(specialist="topology"))
+    orch, _bus, captured = _make_orchestrator_with_broadcaster(specialists=[triage, topo])
+    orch.handle(_PROBLEM_EVENT)
+
+    kinds = [k for _pid, k, _data in captured]
+    # Expected lifecycle: orchestrator-started, then per-specialist
+    # dispatch+complete, then synthesizer-started, then brief-ready.
+    assert kinds[0] == "orchestrator-started"
+    assert kinds[-1] == "brief-ready"
+    # Each specialist contributes exactly one dispatched + one completed event.
+    dispatched = [d for _pid, k, d in captured if k == "specialist-dispatched"]
+    completed = [d for _pid, k, d in captured if k == "specialist-completed"]
+    assert [d["name"] for d in dispatched] == ["triage", "topology"]
+    assert {d["name"] for d in completed} == {"triage", "topology"}
+
+
+def test_orchestrator_emits_memory_short_circuit_event_when_memory_hits():
+    sig = make_signature()
+    rec = IncidentRecord(
+        incident_id="prior-1",
+        signature=sig,
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix="Increased pool size",
+    )
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.95, prior_occurrences=14)
+    )
+    triage = _StubSpecialist("triage", make_evidence())
+    orch, _bus, captured = _make_orchestrator_with_broadcaster(memory=memory, specialists=[triage])
+    orch.handle(_PROBLEM_EVENT)
+
+    kinds = [k for _pid, k, _data in captured]
+    assert "memory-short-circuit" in kinds
+    # Specialists are skipped — no dispatch events.
+    assert "specialist-dispatched" not in kinds
+
+
+def test_orchestrator_without_broadcaster_runs_silently():
+    """No broadcaster wired = no events emitted, no error."""
+    triage = _StubSpecialist("triage", make_evidence())
+    orch = _make_orchestrator(specialists=[triage])
+    # Must not raise; this is the W1 default code path.
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief is not None
+
+
+def test_orchestrator_brief_ready_event_carries_top_hypothesis_when_present():
+    triage = _StubSpecialist(
+        "triage", make_evidence(hypothesis_key="db_pool_exhaustion", stance="supports")
+    )
+    orch, _bus, captured = _make_orchestrator_with_broadcaster(specialists=[triage])
+    orch.handle(_PROBLEM_EVENT)
+
+    brief_ready = [d for _pid, k, d in captured if k == "brief-ready"]
+    assert len(brief_ready) == 1
+    assert "top_hypothesis_key" in brief_ready[0]
+    assert "top_recommendation" in brief_ready[0]
+
+
+def test_orchestrator_memory_hit_brief_ready_event_has_top_hypothesis():
+    """The memory-short-circuit path also fires a brief-ready event."""
+    sig = make_signature()
+    rec = IncidentRecord(
+        incident_id="prior-1",
+        signature=sig,
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix="Increased pool size",
+    )
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.95, prior_occurrences=14)
+    )
+    orch, _bus, captured = _make_orchestrator_with_broadcaster(memory=memory)
+    orch.handle(_PROBLEM_EVENT)
+    kinds = [k for _pid, k, _data in captured]
+    assert kinds[-1] == "brief-ready"

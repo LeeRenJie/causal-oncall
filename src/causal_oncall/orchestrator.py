@@ -27,6 +27,7 @@ from causal_oncall.memory_store import MemoryStore
 from causal_oncall.phoenix_tracer import PhoenixTracer
 from causal_oncall.specialists.base import Specialist
 from causal_oncall.synthesizer import Synthesizer
+from causal_oncall.trace_broadcaster import TraceBroadcaster, TraceEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,12 +60,16 @@ class Orchestrator:
         synthesizer: Synthesizer,
         tracer: PhoenixTracer,
         config: OrchestratorConfig | None = None,
+        trace_broadcaster: TraceBroadcaster | None = None,
     ) -> None:
         self._memory = memory
         self._specialists = tuple(specialists)
         self._synthesizer = synthesizer
         self._tracer = tracer
         self._config = config or OrchestratorConfig()
+        # Optional broadcaster for the live trace UI. When unset, the
+        # orchestrator runs in headless mode (W1 + tests rely on this).
+        self._broadcaster = trace_broadcaster
         # In-process cache of the most recent investigation's signature +
         # collected evidence, keyed on problem_id. Powers the replan path
         # without re-hitting Dynatrace when only the synthesizer needs to
@@ -74,15 +79,25 @@ class Orchestrator:
     def handle(self, problem_open_event: dict) -> Brief:
         """Run the full pipeline for one Dynatrace problem.open event."""
         signature = ProblemSignature.from_dynatrace_payload(problem_open_event)
+        self._emit(signature.problem_id, "orchestrator-started", {"title": signature.title})
 
         match = self._memory_match_or_none(signature)
         if match is not None:
-            return self._brief_from_memory(signature, match)
+            self._emit(
+                signature.problem_id,
+                "memory-short-circuit",
+                {"prior_occurrences": match.prior_occurrences, "similarity": match.similarity},
+            )
+            brief = self._brief_from_memory(signature, match)
+            self._emit_brief_ready_and_close(brief)
+            return brief
 
         evidences = self._dispatch_specialists(signature)
+        self._emit(signature.problem_id, "synthesizer-started", {})
         brief = self._synthesizer.compose(signature, evidences, memory_short_circuit=False)
         self._persist(signature, brief)
         self._last_evidence[signature.problem_id] = (signature, tuple(evidences))
+        self._emit_brief_ready_and_close(brief)
         return brief
 
     def reject_hypothesis_and_replan(self, brief: Brief, rejected_hypothesis_key: str) -> Brief:
@@ -123,8 +138,45 @@ class Orchestrator:
         # change this without verifying the Dynatrace rate-limit ceiling.
         out: list[Evidence] = []
         for specialist in self._specialists:
-            out.append(specialist.investigate(signature))
+            self._emit(signature.problem_id, "specialist-dispatched", {"name": specialist.name})
+            evidence = specialist.investigate(signature)
+            out.append(evidence)
+            self._emit(
+                signature.problem_id,
+                "specialist-completed",
+                {
+                    "name": specialist.name,
+                    "stance": evidence.stance,
+                    "hypothesis_key": evidence.hypothesis_key,
+                    "confidence": evidence.confidence,
+                },
+            )
         return out
+
+    def _emit(self, problem_id: str, kind: str, data: dict) -> None:
+        if self._broadcaster is None:
+            return
+        self._broadcaster.publish(problem_id, TraceEvent(kind=kind, data=data))  # type: ignore[arg-type]
+
+    def _emit_brief_ready_and_close(self, brief: Brief) -> None:
+        if self._broadcaster is None:
+            return
+        top = brief.ranked_hypotheses[0] if brief.ranked_hypotheses else None
+        self._broadcaster.publish(
+            brief.problem_id,
+            TraceEvent(
+                kind="brief-ready",
+                data={
+                    "top_hypothesis_key": top.key if top else None,
+                    "top_hypothesis_title": top.title if top else None,
+                    "top_recommendation": brief.top_recommendation,
+                    "memory_short_circuit": brief.memory_short_circuit,
+                },
+            ),
+        )
+        # Close the SSE stream so the browser gets a clean EOF instead of
+        # hanging until the proxy/idle-timeout drops the connection.
+        self._broadcaster.close(brief.problem_id)
 
     def _brief_from_memory(self, signature: ProblemSignature, match: Match) -> Brief:
         prior_brief = match.record.brief
