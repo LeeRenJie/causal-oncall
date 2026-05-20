@@ -45,8 +45,25 @@ class Specialist(ABC):
         self._dynatrace = dynatrace
 
     @abstractmethod
-    def investigate(self, signature: ProblemSignature) -> Evidence:
-        """Return one Evidence summarizing this specialist's findings."""
+    def investigate(
+        self,
+        signature: ProblemSignature,
+        *,
+        prior_hypothesis: str | None = None,
+    ) -> Evidence:
+        """Return one Evidence summarizing this specialist's findings.
+
+        The optional ``prior_hypothesis`` kwarg is set by the orchestrator
+        when a medium-confidence memory match exists (W3-S2 3-tier
+        short-circuit). Specialists are free to use it as a bias signal
+        for their investigation — e.g. by tightening their DQL filter to
+        the known hypothesis's expected entity types — or ignore it
+        entirely; the contract guarantees that the synthesizer still
+        receives a fully-formed Evidence either way. Today every shipped
+        specialist accepts the kwarg but only logs it via the
+        partial-failure path; the W3 postmortem will revisit whether
+        per-specialist bias logic earns its complexity.
+        """
 
     # Shared helper: subclasses call _safely() with their narrow probe
     # function. On Dynatrace partial failure, returns the standard

@@ -21,7 +21,14 @@ class TopologySpecialist(Specialist):
     # context is the only context read it needs from execute_dql land.
     allowed_dynatrace_methods = ("get_problem_context", "get_topology_neighbors")
 
-    def investigate(self, signature: ProblemSignature) -> Evidence:
+    def investigate(
+        self,
+        signature: ProblemSignature,
+        *,
+        prior_hypothesis: str | None = None,
+    ) -> Evidence:
+        del prior_hypothesis  # accepted for orchestrator contract; not yet biasing the walk
+
         def _probe() -> Evidence:
             self._dynatrace.get_problem_context(signature.problem_id)
             all_neighbors = []

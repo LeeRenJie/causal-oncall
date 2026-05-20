@@ -35,9 +35,13 @@ class _StubSpecialist(Specialist):
         self.name = name
         self._evidence = evidence
         self.calls = 0
+        # Track what prior_hypothesis the orchestrator forwards on each
+        # call. Tests assert on this for the medium-confidence path.
+        self.prior_hypotheses_received: list[str | None] = []
 
-    def investigate(self, signature):
+    def investigate(self, signature, *, prior_hypothesis=None):
         self.calls += 1
+        self.prior_hypotheses_received.append(prior_hypothesis)
         return self._evidence
 
 
@@ -63,7 +67,12 @@ def _make_orchestrator(
 
 
 def test_orchestrator_skips_specialists_when_memory_match_is_high_confidence():
-    """Wow-moment #3: a high-confidence match short-circuits investigation."""
+    """Wow-moment #3: a high-confidence match short-circuits investigation.
+
+    Named per PLAN W3-S2 done-means. Asserts on the full short-circuit
+    contract: zero specialist calls, ``from_memory`` flag set, and the
+    triggering ``pattern_match_score`` surfaced on the returned brief.
+    """
     sig = make_signature()
     rec = IncidentRecord(
         incident_id="prior-1",
@@ -75,18 +84,87 @@ def test_orchestrator_skips_specialists_when_memory_match_is_high_confidence():
         confirmed_fix="Increased pool size",
     )
     memory = FakeMemoryStore(
-        match_to_return=Match(record=rec, similarity=0.95, prior_occurrences=14)
+        match_to_return=Match(record=rec, similarity=0.92, prior_occurrences=14)
     )
     triage = _StubSpecialist("triage", make_evidence())
+    topology = _StubSpecialist("topology", make_evidence(specialist="topology"))
+    deploy = _StubSpecialist("deploy_correlation", make_evidence(specialist="deploy_correlation"))
+    anomaly = _StubSpecialist("anomaly_window", make_evidence(specialist="anomaly_window"))
+    vulnsec = _StubSpecialist("vuln_sec", make_evidence(specialist="vuln_sec"))
 
     orch = _make_orchestrator(
         memory=memory,
-        specialists=[triage],
+        specialists=[triage, topology, deploy, anomaly, vulnsec],
         config=OrchestratorConfig(memory_match_threshold=0.85),
     )
     brief = orch.handle(_PROBLEM_EVENT)
-    assert triage.calls == 0
+    # No specialist's investigate() was called — short-circuit fired.
+    for spec in (triage, topology, deploy, anomaly, vulnsec):
+        assert spec.calls == 0, f"{spec.name} should have been skipped"
     assert brief.memory_short_circuit is True
+    assert brief.from_memory is True
+    assert brief.pattern_match_score == 0.92
+
+
+def test_orchestrator_dispatches_all_specialists_when_memory_match_is_low_confidence():
+    """Wow-moment #3 counterpart: a low-confidence (None) match runs the full pipeline.
+
+    Named per PLAN W3-S2 done-means. The fake memory store returns
+    ``None`` (matches below the low threshold are filtered to None);
+    every specialist must run, and the brief must carry ``from_memory=False``.
+    """
+    triage = _StubSpecialist("triage", make_evidence(specialist="triage"))
+    topology = _StubSpecialist("topology", make_evidence(specialist="topology"))
+    deploy = _StubSpecialist("deploy_correlation", make_evidence(specialist="deploy_correlation"))
+    anomaly = _StubSpecialist("anomaly_window", make_evidence(specialist="anomaly_window"))
+    vulnsec = _StubSpecialist("vuln_sec", make_evidence(specialist="vuln_sec"))
+
+    # FakeMemoryStore with no match_to_return returns None for every query.
+    orch = _make_orchestrator(
+        memory=FakeMemoryStore(match_to_return=None),
+        specialists=[triage, topology, deploy, anomaly, vulnsec],
+    )
+    brief = orch.handle(_PROBLEM_EVENT)
+    for spec in (triage, topology, deploy, anomaly, vulnsec):
+        assert spec.calls == 1, f"{spec.name} should have been dispatched on cold-start"
+        # No prior hypothesis forwarded on the cold-start path.
+        assert spec.prior_hypotheses_received == [None]
+    assert brief.from_memory is False
+    assert brief.pattern_match_score is None
+
+
+def test_orchestrator_dispatches_all_specialists_with_prior_hypothesis_on_medium_confidence_match():
+    """Medium-confidence (0.65 <= score < 0.85) match dispatches specialists with bias."""
+    sig = make_signature()
+    rec = IncidentRecord(
+        incident_id="prior-1",
+        signature=sig,
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix="Increased pool size",
+    )
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.74, prior_occurrences=4)
+    )
+    triage = _StubSpecialist("triage", make_evidence(specialist="triage"))
+    topology = _StubSpecialist("topology", make_evidence(specialist="topology"))
+
+    orch = _make_orchestrator(
+        memory=memory,
+        specialists=[triage, topology],
+        config=OrchestratorConfig(memory_match_threshold=0.85, memory_match_low_threshold=0.65),
+    )
+    brief = orch.handle(_PROBLEM_EVENT)
+    # Both specialists ran (no short-circuit) and each got the prior key.
+    assert triage.calls == 1
+    assert topology.calls == 1
+    assert triage.prior_hypotheses_received == ["db_pool_exhaustion"]
+    assert topology.prior_hypotheses_received == ["db_pool_exhaustion"]
+    # The resulting brief is a fresh synthesis (not a memory short-circuit).
+    assert brief.from_memory is False
+    assert brief.pattern_match_score is None
 
 
 def test_orchestrator_dispatches_all_specialists_when_no_memory_match():
@@ -96,6 +174,9 @@ def test_orchestrator_dispatches_all_specialists_when_no_memory_match():
     orch.handle(_PROBLEM_EVENT)
     assert triage.calls == 1
     assert topo.calls == 1
+    # No memory match → no prior hypothesis forwarded.
+    assert triage.prior_hypotheses_received == [None]
+    assert topo.prior_hypotheses_received == [None]
 
 
 def test_orchestrator_passes_aggregated_evidence_to_synthesizer():
@@ -349,6 +430,39 @@ def test_orchestrator_memory_hit_brief_ready_event_has_top_hypothesis():
     orch.handle(_PROBLEM_EVENT)
     kinds = [k for _pid, k, _data in captured]
     assert kinds[-1] == "brief-ready"
+
+
+def test_orchestrator_emits_memory_prior_hypothesis_event_on_medium_confidence_match():
+    """W3-S2: medium-confidence match emits a discrete prior-hypothesis event.
+
+    Distinct from ``memory-short-circuit`` (high-conf) so the trace UI can
+    differentiate "we biased the investigation" from "we skipped it."
+    """
+    sig = make_signature()
+    rec = IncidentRecord(
+        incident_id="prior-1",
+        signature=sig,
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix="Increased pool size",
+    )
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.74, prior_occurrences=4)
+    )
+    triage = _StubSpecialist("triage", make_evidence(specialist="triage"))
+    orch, _bus, captured = _make_orchestrator_with_broadcaster(memory=memory, specialists=[triage])
+    orch.handle(_PROBLEM_EVENT)
+    kinds = [k for _pid, k, _data in captured]
+    # Medium path: prior-hypothesis emitted, specialists dispatched, no short-circuit.
+    assert "memory-prior-hypothesis" in kinds
+    assert "memory-short-circuit" not in kinds
+    assert "specialist-dispatched" in kinds
+    # The event carries the prior key + similarity so the UI can render the banner.
+    prior_evt = next(d for _pid, k, d in captured if k == "memory-prior-hypothesis")
+    assert prior_evt["prior_hypothesis"] == "db_pool_exhaustion"
+    assert prior_evt["similarity"] == 0.74
 
 
 # ---------- W2-S4 (reframed) + W2-S5: Grail-event write-back ----------

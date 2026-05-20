@@ -447,3 +447,72 @@ cd causal-oncall
 - **`mongomock` was listed in dev deps** for the W1 stub tests; the new fakes don't need it. Left the dep in place — `mongomock` is still a useful escape hatch if a future slice grows a Mongo surface that needs full-driver emulation rather than the narrow `$vectorSearch` shape `FakeMongoCollection` covers.
 
 
+---
+
+### W3-S2 — Orchestrator pre-flight memory match + 3-tier short-circuit — 2026-05-20
+
+**Commit:** (this commit — `feat(W3-S2): orchestrator pre-flight memory match + 3-tier short-circuit`)
+
+**Built:** Wired the pre-flight memory match into `Orchestrator.handle()` as a 3-tier decision tree exactly as the W3-S2 spec requires, plus the supporting Brief schema bump and the `prior_hypothesis` kwarg threaded through every specialist. The high-confidence short-circuit (the wow-moment-#3 path) now skips every specialist when the match score >= 0.85; medium-confidence (0.65–0.85) dispatches all specialists with `prior_hypothesis=<known_key>` so the specialists confirm or refute the known shape rather than re-discovering it cold; low-confidence (<0.65) or no match is the unchanged W1 cold-start path. The `Brief` dataclass gained `from_memory: bool = False` + `pattern_match_score: float | None = None` with `__post_init__` invariants (both-or-neither, score must be in [0, 1]), and a `ClassVar[int] SCHEMA_VERSION = 2` constant that the brief footer now advertises for cross-record traceability.
+
+1. **`Brief.from_memory` + `Brief.pattern_match_score`** — new dataclass fields, both default to the cold-start values so every existing Brief construction continues to work. `__post_init__` enforces the cross-field invariants: `from_memory=True` without `pattern_match_score` raises (the "we've seen this 14x" badge always carries its evidence); `pattern_match_score` set without `from_memory=True` raises; `pattern_match_score` outside `[0.0, 1.0]` raises. The existing `memory_short_circuit` field is preserved unchanged — it's still set in lockstep with `from_memory` so the SSE consumer (`trace_routes.py`), the markdown header, and every prior test continue to read it. New consumers should prefer the `from_memory` / `pattern_match_score` pair.
+
+2. **`Brief.SCHEMA_VERSION = 2` (`ClassVar[int]`)** — bumped from the implicit v1 (which was the pre-W3-S2 shape with no memory provenance). `ClassVar` keeps it off the dataclass `__init__` and `__eq__` so it doesn't break equality semantics. The brief footer now reads `_Generated at <iso> (brief schema v2)_`. The Curator (W3-S3) + the MemoryStore migration code can key off this constant when re-reading historical records.
+
+3. **`OrchestratorConfig.memory_match_low_threshold: float = 0.65`** — the new knob carving the medium band. The existing `memory_match_threshold` (default 0.85) still gates the high-confidence short-circuit; the new low threshold gates the medium band's `prior_hypothesis` bias. Below 0.65 the orchestrator behaves exactly as before (cold start, no bias). Both knobs are configurable via the existing env-driven app wiring.
+
+4. **`Orchestrator.handle()` 3-tier routing.** The pre-flight match runs once at the low threshold so we see medium-confidence matches; the high threshold then decides whether to short-circuit. On high-conf: `_brief_from_memory()` builds the brief with `from_memory=True` + `pattern_match_score=match.similarity`, the existing `_write_back_to_dynatrace()` + `_emit_brief_ready_and_close()` paths run unchanged. On medium-conf: a new `memory-prior-hypothesis` trace event fires (distinct from `memory-short-circuit` so the trace UI can render the two states differently), and `_dispatch_specialists(signature, prior_hypothesis=match.record.confirmed_root_cause_key)` runs the full pipeline. On low/no match: the existing cold-start path runs untouched.
+
+5. **`Specialist.investigate(signature, *, prior_hypothesis: str | None = None)`** — added as an optional kwarg to the abstract base + every shipped specialist (Triage, Topology, DeployCorrelation, AnomalyWindow, VulnSec). Today each specialist accepts the kwarg and discards it via `del prior_hypothesis` (no behavior change yet, no LLM call added — specialists stay deterministic-Python-around-Dynatrace-MCP per W2-S1 docstring). Per the W3-S2 spec: "start simple: dispatch all 5, but pass the known hypothesis as a `prior_hypothesis` param the specialists can use to bias their investigation; flag this as a candidate refinement for the W3 postmortem." Flagged.
+
+6. **Two named tests (PLAN W3-S2 done-means):**
+   - `test_orchestrator_skips_specialists_when_memory_match_is_high_confidence` — extended from the W1 stub to assert all five specialists (triage/topology/deploy/anomaly/vulnsec) stay at `.calls == 0`, the returned Brief carries `from_memory=True`, and `pattern_match_score == 0.92` (the exact similarity the fake returned).
+   - `test_orchestrator_dispatches_all_specialists_when_memory_match_is_low_confidence` — fake memory returns None; assert all five specialists ran exactly once, each received `prior_hypothesis=None`, and the Brief carries `from_memory=False` + `pattern_match_score=None`.
+   - `test_orchestrator_dispatches_all_specialists_with_prior_hypothesis_on_medium_confidence_match` — fake returns similarity 0.74; assert specialists ran AND each received `prior_hypothesis="db_pool_exhaustion"`.
+   - `test_orchestrator_emits_memory_prior_hypothesis_event_on_medium_confidence_match` — pins the trace-UI contract: the medium path emits the discrete `memory-prior-hypothesis` event with `prior_hypothesis` + `similarity` + `prior_occurrences`, and does NOT emit `memory-short-circuit`.
+
+7. **Brief invariant tests** (`tests/unit/domain/test_brief.py`):
+   - `test_brief_defaults_from_memory_to_false_and_pattern_match_score_to_none` — backward-compat default sanity.
+   - `test_brief_from_memory_with_pattern_match_score_constructs_cleanly` — happy path.
+   - `test_brief_rejects_from_memory_without_pattern_match_score` — invariant 1.
+   - `test_brief_rejects_pattern_match_score_without_from_memory` — invariant 2.
+   - `test_brief_rejects_pattern_match_score_outside_unit_interval` — invariant 3.
+   - `test_brief_schema_version_is_at_least_two` — schema bump pin.
+   - `test_brief_markdown_footer_advertises_schema_version` — footer trace.
+
+8. **Integration test branch coverage** (`tests/integration/test_orchestrator_full_pipeline.py`):
+   - The existing `test_full_pipeline_produces_a_brief_with_all_specialists_contributing` now also asserts `brief.from_memory is False` + `pattern_match_score is None` on the cold-start branch.
+   - New `test_full_pipeline_short_circuits_when_memory_has_a_high_confidence_match` — wires the 5 REAL specialist instances (no stubs) against the cold-start `FakeDynatraceClient`, sets a `FakeMemoryStore` with similarity=0.93, and asserts no DQL probe ever lands on the Dynatrace fake (implicit proof the short-circuit fires before any specialist `investigate` reaches its MCP call site).
+
+**Decisions made (deviations from spec, all logged as in-scope adaptations):**
+
+- **`Brief.memory_short_circuit` was NOT removed** when adding `from_memory`. The two fields are now set in lockstep on the memory-hit path (`_brief_from_memory` sets both `True`). Rationale: `memory_short_circuit` is read by the existing markdown header (`Brief.to_markdown`), the SSE `brief-ready` event payload (`trace_routes.py`), the FastAPI webhook JSON response (`app.py`), and ~5 existing tests. Removing it would have rippled into Slack notifier + the trace UI HTML + multiple snapshot-shaped tests for zero behavioral benefit (the two fields are synonymous on the short-circuit path; `from_memory` is the W3-S2-spec-mandated name, and the W3-postmortem can deprecate the older one once no external code reads it). The deep-module rule still holds: Brief's external surface still has one "did this come from memory" boolean for consumers to check, just under the new name.
+
+- **`Synthesizer` interface unchanged.** The spec invited a possible `Synthesizer.compose_from_memory(matched_record)` method ("Synthesizer can gain ONE new public method if needed... but document the deep-module rationale"). I declined. The memory-short-circuit path already lives entirely in `Orchestrator._brief_from_memory` — it builds a `Brief` directly from the matched `IncidentRecord` with no LLM call and no synthesizer invocation. Adding `compose_from_memory` to the Synthesizer would have either (a) been a pure pass-through that did nothing the orchestrator's helper doesn't already do, violating the deep-module rule (narrow interface, large implementation — not narrow interface, zero implementation), or (b) duplicated the orchestrator's logic, violating DRY. The Synthesizer's job is to turn a bag of Evidence into ranked prose; on the memory-hit path there IS no bag of Evidence, only a prior record with a confirmed fix. Keeping the boundary clean: Synthesizer composes from Evidence, Orchestrator composes from memory.
+
+- **`memory_match_or_none` now passes the low threshold as the query**, NOT the high threshold. Previously the orchestrator passed `self._config.memory_match_threshold` (0.85) into the memory store query; this meant the medium band (0.65–0.85) was invisible to the orchestrator because the memory store filtered it out at the source. The 3-tier decision tree REQUIRES seeing medium-confidence matches at the orchestrator level, so the query threshold drops to the low one and the orchestrator handles the high/medium split. `FakeMemoryStore.match` honors whatever threshold the caller passes (already true), and the real `MemoryStore.match` accepts an explicit `threshold` kwarg (already true) — no MemoryStore interface change required. This is the cleanest path consistent with the spec's "Don't change MemoryStore interface" hard constraint.
+
+- **5 specialists each gained a `del prior_hypothesis` line** rather than a real bias implementation. Per the spec: "start simple: dispatch all 5, but pass the known hypothesis as a `prior_hypothesis` param the specialists can use to bias their investigation; flag this as a candidate refinement for the W3 postmortem." Flagged. Real per-specialist bias (e.g. tightening Triage's DQL filter to the known entity types, narrowing Topology's walk to the known blast radius) is W3-postmortem material. The hook is in place; the wiring runs end-to-end; the test contract is pinned.
+
+**Test count + coverage:** **192 passing** (was 181; +11 net), 3 skipped (live-only contract). **100% line + 100% branch** across all 23 critical-path modules (**933 lines / 170 branches**, up from 912 / 162). Orchestrator alone went from 105 / 18 to 118 / 22 stmts/branches at 100% / 100%. Brief went from 41 / 14 to 66 / 24 at 100% / 100% (the `__post_init__` invariants account for the new lines + branches).
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m pytest tests/unit/test_orchestrator.py -v
+.venv/Scripts/python.exe -m pytest tests/unit/domain/test_brief.py -v
+.venv/Scripts/python.exe -m pytest tests/integration/test_orchestrator_full_pipeline.py -v
+.venv/Scripts/python.exe -m ruff check src tests scripts
+.venv/Scripts/python.exe -m black --check src tests scripts
+```
+
+**Demo path impact:** the W3-S2 path produces the wow-moment-#3 artifact (beat 2:00–2:30 — "Same incident replays; pre-flight memory hit, 30-sec resolution"). When a previously-seen problem fires the webhook, the orchestrator now skips all 5 specialists (visible as the absence of specialist events in the trace UI), emits the `memory-short-circuit` event with `prior_occurrences` count for the "seen this 14× in 6 months" badge, and returns a brief with `from_memory=True` + `pattern_match_score`. The `app.py` JSON response already surfaces `memory_short_circuit` for the demo overlay; no app-layer change required this slice. DEMO-SCRIPT.md still to be authored in W4-S2 with the final beat-by-beat narration.
+
+**Postmortem flags:**
+- The 5 specialists' `prior_hypothesis` hooks are no-ops today (each starts with `del prior_hypothesis`). Real bias logic — Triage tightening its DQL filter, Topology pruning to the known blast radius, DeployCorrelation scoping to the suspected service set — is W3-postmortem material. The flagged spec text: *"start simple: dispatch all 5, but pass the known hypothesis as a `prior_hypothesis` param the specialists can use to bias their investigation; flag this as a candidate refinement for the W3 postmortem."*
+- `Brief.memory_short_circuit` and `Brief.from_memory` are now lockstep synonyms on the short-circuit path. Deprecation candidate for W3-postmortem: pick one, remove the other once no external consumer reads it. Today both are needed for backward compat.
+- The Curator (W3-S3) will need to decide what to do with persisted records that have `brief_schema_version < 2` (i.e. records seeded before this slice). Today the seed script + MemoryStore.record() write the current schema unconditionally; no migration script exists. The seed JSON under `tests/fixtures/memory_seeds/seed_10_resolved.json` doesn't carry a schema version (it's pre-W3-S2). When the W3-S3 Curator builder runs, they should either back-fill the seed JSON with `schema_version: 2` or add a migration path that defaults old records to v1. Tracking as a W3-S3 input.
+- `_brief_from_memory` reads `match.record.brief.ranked_hypotheses[0].next_action` as the recommendation when present, falling back to `match.record.confirmed_fix` otherwise. The `_PriorBrief` shim from W3-S1 always returns empty `ranked_hypotheses` (no hypothesis-tree re-hydration from persisted markdown), so today the live Atlas path always takes the `confirmed_fix` branch. This matches the W3-S1 postmortem note ("No `_PriorBrief` re-hydration of structured hypotheses"); fine for the hackathon, post-hackathon TODO if we ever want a richer short-circuit brief.
+
+

@@ -88,3 +88,93 @@ def test_to_markdown_lists_unresolved_questions_when_present():
     md = enriched.to_markdown()
     assert "Open questions for the on-call" in md
     assert "Was the deploy rolled back?" in md
+
+
+# ---------- W3-S2: from_memory + pattern_match_score fields ---------- #
+
+
+def test_brief_defaults_from_memory_to_false_and_pattern_match_score_to_none():
+    """Cold-start briefs carry the W3-S2 fields at their conservative defaults."""
+    brief = make_brief()
+    assert brief.from_memory is False
+    assert brief.pattern_match_score is None
+
+
+def test_brief_from_memory_with_pattern_match_score_constructs_cleanly():
+    """A memory-hit brief sets both fields together."""
+    from causal_oncall.domain.brief import Brief
+
+    brief = Brief(
+        problem_id="P-001",
+        generated_at=make_brief().generated_at,
+        ranked_hypotheses=(),
+        top_recommendation="Apply known fix.",
+        memory_short_circuit=True,
+        from_memory=True,
+        pattern_match_score=0.92,
+    )
+    assert brief.from_memory is True
+    assert brief.pattern_match_score == 0.92
+
+
+def test_brief_rejects_from_memory_without_pattern_match_score():
+    """Invariant: from_memory implies the score that triggered it is recorded."""
+    import pytest
+
+    from causal_oncall.domain.brief import Brief
+
+    with pytest.raises(ValueError, match="pattern_match_score"):
+        Brief(
+            problem_id="P-001",
+            generated_at=make_brief().generated_at,
+            ranked_hypotheses=(),
+            top_recommendation="x",
+            from_memory=True,
+        )
+
+
+def test_brief_rejects_pattern_match_score_without_from_memory():
+    """Inverse invariant: score is only meaningful when from_memory=True."""
+    import pytest
+
+    from causal_oncall.domain.brief import Brief
+
+    with pytest.raises(ValueError, match="from_memory"):
+        Brief(
+            problem_id="P-001",
+            generated_at=make_brief().generated_at,
+            ranked_hypotheses=(),
+            top_recommendation="x",
+            pattern_match_score=0.92,
+        )
+
+
+def test_brief_rejects_pattern_match_score_outside_unit_interval():
+    """Score is a cosine similarity — must live in [0.0, 1.0]."""
+    import pytest
+
+    from causal_oncall.domain.brief import Brief
+
+    with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\]"):
+        Brief(
+            problem_id="P-001",
+            generated_at=make_brief().generated_at,
+            ranked_hypotheses=(),
+            top_recommendation="x",
+            from_memory=True,
+            pattern_match_score=1.42,
+        )
+
+
+def test_brief_schema_version_is_at_least_two():
+    """W3-S2 bumped schema_version; downstream readers key off this constant."""
+    from causal_oncall.domain.brief import Brief
+
+    assert Brief.SCHEMA_VERSION >= 2
+
+
+def test_brief_markdown_footer_advertises_schema_version():
+    """The rendered brief carries the schema version in its footer for traceability."""
+    brief = make_brief()
+    md = brief.to_markdown()
+    assert f"schema v{brief.SCHEMA_VERSION}" in md

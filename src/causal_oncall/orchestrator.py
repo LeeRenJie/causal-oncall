@@ -38,9 +38,21 @@ from causal_oncall.trace_broadcaster import TraceBroadcaster, TraceEvent
 
 @dataclass(frozen=True, slots=True)
 class OrchestratorConfig:
-    """All knobs that affect orchestration policy."""
+    """All knobs that affect orchestration policy.
+
+    Two memory thresholds carve the 3-tier pre-flight short-circuit:
+
+      * ``>= memory_match_threshold`` (default 0.85) — high confidence;
+        skip every specialist and synthesize from the prior IncidentRecord.
+      * ``[memory_match_low_threshold, memory_match_threshold)`` (default
+        0.65–0.85) — medium confidence; dispatch every specialist but
+        bias them with the prior hypothesis key so the investigation
+        confirms or refutes the known shape rather than re-discovering it.
+      * ``< memory_match_low_threshold`` or no match — full cold start.
+    """
 
     memory_match_threshold: float = 0.85
+    memory_match_low_threshold: float = 0.65
     specialist_dispatch_budget_seconds: float = 60.0
 
 
@@ -95,12 +107,25 @@ class Orchestrator:
         self._last_evidence: dict[str, tuple[ProblemSignature, tuple[Evidence, ...]]] = {}
 
     def handle(self, problem_open_event: dict) -> Brief:
-        """Run the full pipeline for one Dynatrace problem.open event."""
+        """Run the full pipeline for one Dynatrace problem.open event.
+
+        Three-tier pre-flight memory routing (see ``OrchestratorConfig``):
+
+          * High match → ``_brief_from_memory`` short-circuit (no specialists).
+          * Medium match → full specialist dispatch with ``prior_hypothesis``
+            bias passed through so each specialist can confirm/refute the
+            known shape.
+          * Low / no match → cold-start dispatch (W1 behavior).
+        """
         signature = ProblemSignature.from_dynatrace_payload(problem_open_event)
         self._emit(signature.problem_id, "orchestrator-started", {"title": signature.title})
 
-        match = self._memory_match_or_none(signature)
-        if match is not None:
+        # The match call uses the low threshold so we *see* medium-confidence
+        # matches; the high threshold gates the actual short-circuit below.
+        match = self._memory_match_or_none(
+            signature, threshold=self._config.memory_match_low_threshold
+        )
+        if match is not None and match.similarity >= self._config.memory_match_threshold:
             self._emit(
                 signature.problem_id,
                 "memory-short-circuit",
@@ -111,7 +136,25 @@ class Orchestrator:
             self._emit_brief_ready_and_close(brief)
             return brief
 
-        evidences = self._dispatch_specialists(signature)
+        prior_hypothesis: str | None = None
+        if match is not None:
+            # Medium-confidence band: bias the specialists with the known
+            # hypothesis key so they confirm/refute it rather than
+            # re-discover it from scratch. Emit a discrete event so the
+            # trace UI can surface "we've seen this before but want fresh
+            # evidence" distinctly from the cold-start case.
+            prior_hypothesis = match.record.confirmed_root_cause_key
+            self._emit(
+                signature.problem_id,
+                "memory-prior-hypothesis",
+                {
+                    "similarity": match.similarity,
+                    "prior_occurrences": match.prior_occurrences,
+                    "prior_hypothesis": prior_hypothesis,
+                },
+            )
+
+        evidences = self._dispatch_specialists(signature, prior_hypothesis=prior_hypothesis)
         self._emit(signature.problem_id, "synthesizer-started", {})
         brief = self._synthesizer.compose(signature, evidences, memory_short_circuit=False)
         self._persist(signature, brief)
@@ -146,20 +189,32 @@ class Orchestrator:
     # Internals.
     # ------------------------------------------------------------------ #
 
-    def _memory_match_or_none(self, signature: ProblemSignature) -> Match | None:
+    def _memory_match_or_none(
+        self, signature: ProblemSignature, *, threshold: float | None = None
+    ) -> Match | None:
         try:
-            return self._memory.match(signature, threshold=self._config.memory_match_threshold)
+            return self._memory.match(
+                signature,
+                threshold=(
+                    threshold if threshold is not None else self._config.memory_match_threshold
+                ),
+            )
         except MemoryStoreUnavailable:
             return None
 
-    def _dispatch_specialists(self, signature: ProblemSignature) -> list[Evidence]:
+    def _dispatch_specialists(
+        self,
+        signature: ProblemSignature,
+        *,
+        prior_hypothesis: str | None = None,
+    ) -> list[Evidence]:
         # Sequential dispatch — see module docstring. If parallelism becomes
         # safe (e.g. cache hot), promote to asyncio.gather; do not silently
         # change this without verifying the Dynatrace rate-limit ceiling.
         out: list[Evidence] = []
         for specialist in self._specialists:
             self._emit(signature.problem_id, "specialist-dispatched", {"name": specialist.name})
-            evidence = specialist.investigate(signature)
+            evidence = specialist.investigate(signature, prior_hypothesis=prior_hypothesis)
             out.append(evidence)
             self._emit(
                 signature.problem_id,
@@ -275,6 +330,8 @@ class Orchestrator:
             ranked_hypotheses=hypotheses,
             top_recommendation=recommendation,
             memory_short_circuit=True,
+            from_memory=True,
+            pattern_match_score=match.similarity,
         )
 
     def _persist(self, signature: ProblemSignature, brief: Brief) -> None:
@@ -302,6 +359,8 @@ class Orchestrator:
                 top_recommendation="No hypotheses remain; re-investigate manually.",
                 memory_short_circuit=brief.memory_short_circuit,
                 unresolved_questions=brief.unresolved_questions,
+                from_memory=brief.from_memory,
+                pattern_match_score=brief.pattern_match_score,
             )
         # Re-rank: walk the ordered remainder and assign 1..N.
         renumbered = tuple(
@@ -323,4 +382,6 @@ class Orchestrator:
             top_recommendation=renumbered[0].next_action,
             memory_short_circuit=brief.memory_short_circuit,
             unresolved_questions=brief.unresolved_questions,
+            from_memory=brief.from_memory,
+            pattern_match_score=brief.pattern_match_score,
         )

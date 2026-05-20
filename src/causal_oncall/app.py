@@ -306,6 +306,11 @@ async def webhook_dynatrace_problem(request: Request) -> JSONResponse:
             for h in brief.ranked_hypotheses
         ],
         "memory_short_circuit": brief.memory_short_circuit,
+        # W3-S2: explicit fields the demo + dashboard read for the
+        # "pre-flight memory hit" wow moment. Kept alongside the legacy
+        # `memory_short_circuit` boolean so consumers can migrate gradually.
+        "from_memory": brief.from_memory,
+        "pattern_match_score": brief.pattern_match_score,
         "markdown": brief.to_markdown(),
     }
     if wiring.slack is not None:

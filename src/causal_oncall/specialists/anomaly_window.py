@@ -22,7 +22,14 @@ class AnomalyWindowSpecialist(Specialist):
     # Anomaly window pulls SLI golden-signal metrics through execute_dql.
     allowed_dynatrace_methods = ("get_problem_context", "execute_dql")
 
-    def investigate(self, signature: ProblemSignature) -> Evidence:
+    def investigate(
+        self,
+        signature: ProblemSignature,
+        *,
+        prior_hypothesis: str | None = None,
+    ) -> Evidence:
+        del prior_hypothesis  # accepted for orchestrator contract; not yet biasing the analyzer
+
         def _probe() -> Evidence:
             self._dynatrace.get_problem_context(signature.problem_id)
             result = self._dynatrace.execute_dql(
