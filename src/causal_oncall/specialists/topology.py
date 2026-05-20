@@ -16,9 +16,28 @@ class TopologySpecialist(Specialist):
     """Walk the topology outward, rank downstream services by blast radius."""
 
     name = "topology"
+    fallback_hypothesis_key = "topology_unavailable"
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
-        raise NotImplementedError(
-            "Topology: traverse downstream neighbors of affected entities and "
-            "summarize the top-N at-risk services as Evidence."
-        )
+        def _probe() -> Evidence:
+            self._dynatrace.get_problem_context(signature.problem_id)
+            all_neighbors = []
+            for entity_id in signature.affected_entity_ids:
+                neighbors = self._dynatrace.get_topology_neighbors(entity_id, depth=2)
+                all_neighbors.extend(neighbors)
+            blast = len({n.entity_id for n in all_neighbors})
+            confidence = 0.5 + min(0.4, 0.05 * blast)
+            names = (
+                ", ".join(sorted({n.display_name for n in all_neighbors}))
+                or "no downstream services"
+            )
+            return Evidence(
+                specialist=self.name,
+                kind="topology_blast_radius",
+                summary=f"Blast radius spans {blast} downstream service(s): {names}.",
+                stance="informational" if blast == 0 else "supports",
+                hypothesis_key="db_pool_exhaustion",
+                confidence=confidence,
+            )
+
+        return self._safely(signature, _probe)

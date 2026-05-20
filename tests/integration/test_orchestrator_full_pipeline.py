@@ -29,7 +29,6 @@ from tests.conftest import (
     make_signature,
 )
 
-
 _PROBLEM_EVENT = {
     "problemId": "P-001",
     "title": "Payment latency spike",

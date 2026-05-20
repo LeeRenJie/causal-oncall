@@ -59,7 +59,31 @@ class Evidence:
         specialist and must be caught before the synthesizer trusts it
         for ranking. Empty summaries make for a useless brief.
         """
-        raise NotImplementedError(
-            "Validate that confidence is in [0.0, 1.0] and that summary "
-            "and hypothesis_key are non-empty."
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(
+                f"Evidence.confidence must be within [0.0, 1.0]; got {self.confidence!r}"
+            )
+        if not self.summary:
+            raise ValueError("Evidence.summary must be non-empty")
+        if not self.hypothesis_key:
+            raise ValueError("Evidence.hypothesis_key must be non-empty")
+
+    def __hash__(self) -> int:
+        """Hash on the identity fields only.
+
+        ``raw_payload`` is a mutable dict provenance artifact for the
+        Phoenix trace, never relied on for equality / set-membership
+        semantics. Excluding it keeps Evidence hashable while preserving
+        the frozen-dataclass contract for the rest of the fields.
+        """
+        return hash(
+            (
+                self.specialist,
+                self.kind,
+                self.summary,
+                self.stance,
+                self.hypothesis_key,
+                self.confidence,
+                self.dynatrace_links,
+            )
         )

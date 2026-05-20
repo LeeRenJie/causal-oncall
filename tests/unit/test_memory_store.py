@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from causal_oncall.domain.incident_record import IncidentRecord
-from causal_oncall.domain.problem_signature import ProblemSignature
 from causal_oncall.memory_store import MemoryStore, MemoryStoreConfig
 from tests.conftest import make_brief, make_signature
 
@@ -156,3 +155,48 @@ def test_update_resolution_attaches_human_verdict(monkeypatch):
     assert doc["confirmed_root_cause_key"] == "db_pool_exhaustion"
     assert doc["confirmed_fix"] == "Increased pool size"
     assert doc.get("resolved_at") is not None
+
+
+def test_match_skips_docs_with_missing_embedding(monkeypatch):
+    store = MemoryStore(_cfg(match_threshold=0.5))
+    _install_fakes(
+        store,
+        monkeypatch,
+        records=[
+            {
+                "fingerprint": "fp-noemb",
+                "embedding": [],
+                "confirmed_root_cause_key": "db_pool_exhaustion",
+                "confirmed_fix": "...",
+                "incident_id": "noemb-1",
+            }
+        ],
+    )
+    assert store.match(make_signature(fingerprint="fp-new")) is None
+
+
+def test_cosine_returns_zero_on_zero_norm_vector():
+    """A zero vector against anything is degenerate; we surface 0.0 rather than nan."""
+    from causal_oncall.memory_store import _cosine
+
+    assert _cosine([0.0, 0.0, 0.0], [1.0, 2.0, 3.0]) == 0.0
+    assert _cosine([1.0, 2.0, 3.0], [0.0, 0.0, 0.0]) == 0.0
+
+
+def test_record_persists_embedding_when_record_already_carries_one(monkeypatch):
+    """If the IncidentRecord pre-supplies an embedding, we don't re-embed."""
+    store = MemoryStore(_cfg())
+    coll = _install_fakes(store, monkeypatch, records=[])
+
+    sig = make_signature(fingerprint="fp-Y")
+    rec = IncidentRecord(
+        incident_id="inc-2",
+        signature=sig,
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 17, tzinfo=UTC),
+        embedding=(0.5, 0.5, 0.5, 0.5),
+    )
+    store.record(rec)
+    doc = coll.find_one({"incident_id": "inc-2"})
+    assert doc is not None
+    assert doc["embedding"] == [0.5, 0.5, 0.5, 0.5]

@@ -92,3 +92,40 @@ def test_curator_idempotent_on_already_promoted_clusters(monkeypatch):
     report = curator.run_weekly_batch()
     assert report.clusters_promoted == 0
     promote.assert_not_called()
+
+
+def test_curator_skips_records_with_no_confirmed_root_cause(monkeypatch):
+    """Records lacking confirmed_root_cause_key are still-open; ignore them."""
+    memory = FakeMemoryStore()
+    open_record = IncidentRecord(
+        incident_id="open-1",
+        signature=make_signature(fingerprint="fp-open"),
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=None,
+        confirmed_root_cause_key=None,
+    )
+    monkeypatch.setattr(
+        memory,
+        "list_resolved_since",
+        lambda days: [open_record],
+        raising=False,
+    )
+    monkeypatch.setattr(memory, "promote_few_shot", lambda *a, **kw: None, raising=False)
+
+    curator = Curator(memory=memory)
+    report = curator.run_weekly_batch()
+    assert report.clusters_promoted == 0
+    assert "no recurring pattern" in report.top_recurring_pattern
+
+
+def test_curator_handles_empty_window(monkeypatch):
+    """Empty resolved-incident window produces a zero-cluster report."""
+    memory = FakeMemoryStore()
+    monkeypatch.setattr(memory, "list_resolved_since", lambda days: [], raising=False)
+    monkeypatch.setattr(memory, "promote_few_shot", lambda *a, **kw: None, raising=False)
+
+    curator = Curator(memory=memory)
+    report = curator.run_weekly_batch()
+    assert report.incidents_scanned == 0
+    assert report.clusters_promoted == 0

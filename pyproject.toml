@@ -140,7 +140,10 @@ select = [
     "RUF",           # ruff-specific
 ]
 ignore = [
-    "E501",  # line length handled by black
+    "E501",   # line length handled by black
+    "RUF002", # en-dash in docstrings is intentional prose
+    "RUF001", # ambiguous unicode in identifiers/strings — intentional in fixtures
+    "RUF003", # ambiguous unicode in comments — intentional in prose comments
 ]
 
 [tool.ruff.lint.per-file-ignores]

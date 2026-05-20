@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 
 from causal_oncall.domain.problem_signature import ProblemSignature
 
-
 _VALID_PAYLOAD = {
     "problemId": "-1234567890123456789_v2",
     "title": "Response time degradation",

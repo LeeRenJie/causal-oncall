@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from causal_oncall.domain.evidence import Evidence
 from causal_oncall.domain.problem_signature import ProblemSignature
+from causal_oncall.dynatrace_client import DQLPlan
 from causal_oncall.specialists.base import Specialist
 
 
@@ -16,9 +17,31 @@ class TriageSpecialist(Specialist):
     """Convert problem context to DQL, fetch logs around the event window."""
 
     name = "triage"
+    fallback_hypothesis_key = "triage_unavailable"
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
-        raise NotImplementedError(
-            "Triage: translate signature to DQL via Davis CoPilot (with fallback "
-            "templates), execute, and summarize log-pattern findings as Evidence."
-        )
+        def _probe() -> Evidence:
+            self._dynatrace.get_problem_context(signature.problem_id)
+            result = self._dynatrace.execute_dql(
+                DQLPlan(
+                    query=(
+                        f"fetch logs | filter dt.entity.service in [{', '.join(signature.affected_entity_ids)!r}]"
+                        " | filter loglevel == 'ERROR' | summarize count() by status"
+                    )
+                )
+            )
+            error_count = len(result.rows)
+            confidence = 0.55 + min(0.3, 0.05 * error_count)
+            return Evidence(
+                specialist=self.name,
+                kind="log_pattern",
+                summary=(
+                    f"Triage found {error_count} error-row(s) in the event window "
+                    f"for {len(signature.affected_entity_ids)} affected service(s)."
+                ),
+                stance="supports",
+                hypothesis_key="db_pool_exhaustion",
+                confidence=confidence,
+            )
+
+        return self._safely(signature, _probe)

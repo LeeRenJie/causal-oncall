@@ -56,10 +56,10 @@ def test_traced_decorator_records_exceptions_on_the_span(monkeypatch):
     def boom():
         raise RuntimeError("nope")
 
-    try:
+    import contextlib
+
+    with contextlib.suppress(RuntimeError):
         boom()
-    except RuntimeError:
-        pass
 
     assert recorder.spans[0]["ended"] is True
     assert isinstance(recorder.spans[0]["error"], RuntimeError)
@@ -68,9 +68,7 @@ def test_traced_decorator_records_exceptions_on_the_span(monkeypatch):
 def test_record_outcome_writes_eval_row(monkeypatch):
     tracer = PhoenixTracer(_cfg())
     rows: list[dict] = []
-    monkeypatch.setattr(
-        tracer, "_eval_writer", lambda row: rows.append(row), raising=False
-    )
+    monkeypatch.setattr(tracer, "_eval_writer", lambda row: rows.append(row), raising=False)
 
     tracer.record_outcome("span-7", top_hypothesis_correct=True)
     assert len(rows) == 1

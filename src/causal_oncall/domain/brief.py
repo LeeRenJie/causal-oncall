@@ -66,6 +66,43 @@ class Brief:
         The Slack notifier converts the same Brief to Slack block-kit; the
         two renderings share data but not formatting code.
         """
-        raise NotImplementedError(
-            "Render the brief as a Dynatrace-comment-compatible Markdown string."
-        )
+        lines: list[str] = []
+        lines.append(f"# Causal On-Call brief for {self.problem_id}")
+        lines.append("")
+        if self.memory_short_circuit:
+            lines.append(
+                "> **Memory hit** — we have seen this incident shape before; "
+                "the recommendation below is the proven prior fix."
+            )
+            lines.append("")
+        lines.append(f"**Next action:** {self.top_recommendation}")
+        lines.append("")
+        lines.append("## Ranked hypotheses")
+        ranked = sorted(self.ranked_hypotheses, key=lambda h: h.rank)
+        for hyp in ranked:
+            lines.append("")
+            lines.append(f"### {hyp.rank}. {hyp.title}")
+            lines.append(f"_score: {hyp.score:.2f}_")
+            lines.append("")
+            lines.append(f"**Recommended action:** {hyp.next_action}")
+            if hyp.supporting_evidence:
+                lines.append("")
+                lines.append("**Supporting evidence:**")
+                for ev in hyp.supporting_evidence:
+                    bullet = f"- ({ev.specialist}, conf={ev.confidence:.2f}) {ev.summary}"
+                    lines.append(bullet)
+                    for link in ev.dynatrace_links:
+                        lines.append(f"  - [Open in Dynatrace]({link})")
+            if hyp.refuting_evidence:
+                lines.append("")
+                lines.append("**Refuting evidence:**")
+                for ev in hyp.refuting_evidence:
+                    lines.append(f"- ({ev.specialist}, conf={ev.confidence:.2f}) {ev.summary}")
+        if self.unresolved_questions:
+            lines.append("")
+            lines.append("## Open questions for the on-call")
+            for q in self.unresolved_questions:
+                lines.append(f"- {q}")
+        lines.append("")
+        lines.append(f"_Generated at {self.generated_at.isoformat()}_")
+        return "\n".join(lines)

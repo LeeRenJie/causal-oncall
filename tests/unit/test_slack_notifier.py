@@ -89,3 +89,13 @@ def test_await_feedback_returns_feedback_event_when_user_clicks(monkeypatch):
     )
     monkeypatch.setattr(notifier, "_poll_for_feedback", lambda ref, t: fb, raising=False)
     assert notifier.await_feedback(fb.message_ref, timeout_seconds=1.0) is fb
+
+
+def test_post_brief_renders_memory_short_circuit_badge(monkeypatch):
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+    brief = make_brief(problem_id="P-X", memory_short_circuit=True)
+    notifier.post_brief(brief, feedback_channel="C123")
+    rendered = repr(fake.posted[0].get("blocks", []))
+    assert "seen this incident shape" in rendered

@@ -9,6 +9,7 @@ double-posts the same brief).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from causal_oncall.domain.brief import Brief
 
@@ -54,24 +55,104 @@ class SlackNotifier:
 
     def __init__(self, config: SlackNotifierConfig) -> None:
         self._config = config
+        self._slack: Any = None  # populated lazily in production; tests patch
+        # Idempotency cache keyed on brief.problem_id so a retried webhook
+        # returns the same MessageRef rather than double-posting.
+        self._posted_briefs: dict[str, MessageRef] = {}
+        # Feedback polling seam — tests substitute via monkeypatch to keep
+        # the wait short. Default implementation returns None immediately.
+        self._poll_for_feedback: Any = self._default_poll_for_feedback
 
     def post_brief(self, brief: Brief, feedback_channel: str) -> MessageRef:
-        """Render the brief as Slack block-kit and post it. Returns a MessageRef.
+        """Render the brief as Slack block-kit and post it. Returns a MessageRef."""
+        cached = self._posted_briefs.get(brief.problem_id)
+        if cached is not None:
+            return cached
 
-        Idempotent on ``brief.problem_id``: a retry won't post twice.
-        """
-        raise NotImplementedError(
-            "Render the brief into Slack block-kit, post it to feedback_channel, "
-            "and return a MessageRef. Honor brief.problem_id for idempotency."
-        )
+        blocks = self._render_block_kit(brief)
+        slack = self._ensure_slack()
+        response = slack.chat_postMessage(channel=feedback_channel, blocks=blocks)
+        ref = MessageRef(channel_id=str(response["channel"]), message_ts=str(response["ts"]))
+        self._posted_briefs[brief.problem_id] = ref
+        return ref
 
-    def await_feedback(self, msg_ref: MessageRef, *, timeout_seconds: float) -> FeedbackEvent | None:
-        """Block (or wait async) for the on-call's button click. Returns None on timeout.
+    def await_feedback(
+        self, msg_ref: MessageRef, *, timeout_seconds: float
+    ) -> FeedbackEvent | None:
+        """Block (or wait async) for the on-call's button click. Returns None on timeout."""
+        return self._poll_for_feedback(msg_ref, timeout_seconds)
 
-        The verdict captured here flows into ``MemoryStore.update_resolution``
-        and ``PhoenixTracer.record_outcome``.
-        """
-        raise NotImplementedError(
-            "Wait up to timeout_seconds for the on-call's button click on the "
-            "posted brief and return the FeedbackEvent (or None on timeout)."
-        )
+    # ------------------------------------------------------------------ #
+    # Internals.
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _render_block_kit(brief: Brief) -> list[dict]:
+        blocks: list[dict] = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"Causal On-Call: {brief.problem_id}",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Next action:* {brief.top_recommendation}",
+                },
+            },
+        ]
+        if brief.memory_short_circuit:
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": ":bookmark: We have seen this incident shape before.",
+                        }
+                    ],
+                }
+            )
+        for hyp in brief.ranked_hypotheses:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*{hyp.rank}. {hyp.title}* — score {hyp.score:.2f}",
+                    },
+                }
+            )
+            blocks.append(
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {
+                                "type": "plain_text",
+                                "text": f"Reject #{hyp.rank}",
+                            },
+                            "value": hyp.key,
+                            "action_id": f"reject_{hyp.key}",
+                        }
+                    ],
+                }
+            )
+        return blocks
+
+    def _ensure_slack(self):  # pragma: no cover  # exercised by contract test in W2
+        if self._slack is None:
+            from slack_sdk import WebClient
+
+            self._slack = WebClient(token=self._config.bot_token)
+        return self._slack
+
+    @staticmethod
+    def _default_poll_for_feedback(
+        msg_ref: MessageRef, timeout_seconds: float
+    ) -> FeedbackEvent | None:  # pragma: no cover  # real Slack listener lives in W2
+        return None

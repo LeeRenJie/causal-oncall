@@ -55,6 +55,7 @@ coverage.xml
 # Build artifacts
 *.log
 .local-cache/
+out/
 
 # Node (Dynatrace MCP runs via npx; some IDEs cache node_modules locally)
 node_modules/

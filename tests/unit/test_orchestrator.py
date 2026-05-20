@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 
 from causal_oncall.domain.evidence import Evidence
 from causal_oncall.domain.incident_record import IncidentRecord, Match
-from causal_oncall.domain.problem_signature import ProblemSignature
 from causal_oncall.orchestrator import Orchestrator, OrchestratorConfig
 from causal_oncall.specialists.base import Specialist
 from tests.conftest import (
@@ -37,7 +36,7 @@ class _StubSpecialist(Specialist):
         self._evidence = evidence
         self.calls = 0
 
-    def investigate(self, signature):  # noqa: D401
+    def investigate(self, signature):
         self.calls += 1
         return self._evidence
 
@@ -56,8 +55,7 @@ def _make_orchestrator(
 ) -> Orchestrator:
     return Orchestrator(
         memory=memory or FakeMemoryStore(),
-        specialists=specialists
-        or [_StubSpecialist("triage", make_evidence(specialist="triage"))],
+        specialists=specialists or [_StubSpecialist("triage", make_evidence(specialist="triage"))],
         synthesizer=synthesizer or FakeSynthesizer(),
         tracer=FakePhoenixTracer(),
         config=config or OrchestratorConfig(),
@@ -76,7 +74,9 @@ def test_orchestrator_skips_specialists_when_memory_match_is_high_confidence():
         confirmed_root_cause_key="db_pool_exhaustion",
         confirmed_fix="Increased pool size",
     )
-    memory = FakeMemoryStore(match_to_return=Match(record=rec, similarity=0.95, prior_occurrences=14))
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.95, prior_occurrences=14)
+    )
     triage = _StubSpecialist("triage", make_evidence())
 
     orch = _make_orchestrator(
@@ -99,12 +99,8 @@ def test_orchestrator_dispatches_all_specialists_when_no_memory_match():
 
 
 def test_orchestrator_passes_aggregated_evidence_to_synthesizer():
-    triage = _StubSpecialist(
-        "triage", make_evidence(specialist="triage", hypothesis_key="A")
-    )
-    topo = _StubSpecialist(
-        "topology", make_evidence(specialist="topology", hypothesis_key="B")
-    )
+    triage = _StubSpecialist("triage", make_evidence(specialist="triage", hypothesis_key="A"))
+    topo = _StubSpecialist("topology", make_evidence(specialist="topology", hypothesis_key="B"))
     synth = FakeSynthesizer()
     orch = _make_orchestrator(specialists=[triage, topo], synthesizer=synth)
     orch.handle(_PROBLEM_EVENT)
@@ -149,3 +145,99 @@ def test_replan_with_rejected_hypothesis_excludes_it_from_new_brief():
     replanned = orch.reject_hypothesis_and_replan(first, "db_pool_exhaustion")
     keys = {h.key for h in replanned.ranked_hypotheses}
     assert "db_pool_exhaustion" not in keys
+
+
+def test_replan_synthesizes_a_fresh_brief_when_cache_has_remaining_keys():
+    """When >1 hypothesis_key was investigated, replan re-synthesizes minus the rejected one."""
+    h_remaining = make_hypothesis(key="keep", title="Keep me", rank=2, score=0.5)
+    h_other = make_hypothesis(key="keep_other", title="Keep me too", rank=3, score=0.4)
+    synth = FakeSynthesizer(
+        brief_to_return=make_brief(
+            problem_id="P-1",  # must match _PROBLEM_EVENT.problemId for the cache to hit
+            hypotheses=(make_hypothesis(key="db_pool_exhaustion"), h_remaining, h_other),
+        )
+    )
+    triage = _StubSpecialist(
+        "triage", make_evidence(hypothesis_key="db_pool_exhaustion", stance="supports")
+    )
+    topo = _StubSpecialist(
+        "topology",
+        make_evidence(specialist="topology", hypothesis_key="keep", stance="supports"),
+    )
+    orch = _make_orchestrator(specialists=[triage, topo], synthesizer=synth)
+    first = orch.handle(_PROBLEM_EVENT)
+
+    # Set synthesizer to return a brief that does include 'keep' but not 'db_pool_exhaustion'.
+    synth.brief_to_return = make_brief(problem_id="P-1", hypotheses=(h_remaining, h_other))
+    replanned = orch.reject_hypothesis_and_replan(first, "db_pool_exhaustion")
+
+    # Re-ranked starting at 1.
+    ranks = [h.rank for h in replanned.ranked_hypotheses]
+    assert ranks == [1, 2]
+    assert {h.key for h in replanned.ranked_hypotheses} == {"keep", "keep_other"}
+
+
+def test_orchestrator_uses_memory_record_when_prior_brief_has_no_hypotheses(monkeypatch):
+    """If the prior IncidentRecord's brief lost its hypothesis tree, fall back to the confirmed fix."""
+    sig = make_signature()
+    # Build a record whose stored brief has empty ranked_hypotheses.
+    empty_brief = make_brief(hypotheses=(make_hypothesis(),))
+    from causal_oncall.domain.brief import Brief
+
+    bare_brief = Brief(
+        problem_id=empty_brief.problem_id,
+        generated_at=empty_brief.generated_at,
+        ranked_hypotheses=(),
+        top_recommendation="legacy fix",
+    )
+    rec = IncidentRecord(
+        incident_id="prior-1",
+        signature=sig,
+        brief=bare_brief,
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix="Increased pool size",
+    )
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.99, prior_occurrences=7)
+    )
+    orch = _make_orchestrator(memory=memory)
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief.memory_short_circuit is True
+    assert brief.ranked_hypotheses[0].key == "db_pool_exhaustion"
+
+
+def test_orchestrator_swallows_memory_store_unavailable_during_record():
+    """If persisting fails, the agent still returns the brief — memory is best-effort."""
+    from causal_oncall.domain.exceptions import MemoryStoreUnavailable
+
+    class _FlakyMemory(FakeMemoryStore):
+        def record(self, incident_record):
+            raise MemoryStoreUnavailable("atlas write blocked")
+
+    orch = _make_orchestrator(memory=_FlakyMemory())
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief is not None
+
+
+def test_replan_returns_empty_recommendation_when_rejection_removes_all_hypotheses():
+    """All hypotheses share the rejected key → surface a clear no-op brief."""
+    triage = _StubSpecialist(
+        "triage", make_evidence(hypothesis_key="db_pool_exhaustion", stance="supports")
+    )
+    orch = _make_orchestrator(specialists=[triage])
+    first = orch.handle(_PROBLEM_EVENT)
+    replanned = orch.reject_hypothesis_and_replan(first, "db_pool_exhaustion")
+    assert replanned.ranked_hypotheses == ()
+    assert "re-investigate" in replanned.top_recommendation.lower()
+
+
+def test_replan_with_unknown_brief_id_falls_back_to_strip_only():
+    """Replan path with no cached evidence still returns a brief minus the key."""
+    orch = _make_orchestrator()
+    h_a = make_hypothesis(key="a", rank=1)
+    h_b = make_hypothesis(key="b", rank=2)
+    stranger_brief = make_brief(problem_id="P-UNKNOWN", hypotheses=(h_a, h_b))
+    replanned = orch.reject_hypothesis_and_replan(stranger_brief, "a")
+    assert {h.key for h in replanned.ranked_hypotheses} == {"b"}

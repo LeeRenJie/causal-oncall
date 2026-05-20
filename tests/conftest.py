@@ -22,7 +22,6 @@ from causal_oncall.domain.incident_record import IncidentRecord, Match
 from causal_oncall.domain.problem_signature import ProblemSignature
 from causal_oncall.dynatrace_client import DQLPlan, Entity, ProblemContext, QueryResult
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -155,9 +154,7 @@ class FakeDynatraceClient:
         raise AssertionError(f"FakeDynatraceClient: no stubbed DQL result matching {plan.query!r}")
 
     def get_topology_neighbors(self, entity_id: str, depth: int = 1) -> list[Entity]:
-        self.calls.append(
-            ("get_topology_neighbors", {"entity_id": entity_id, "depth": depth})
-        )
+        self.calls.append(("get_topology_neighbors", {"entity_id": entity_id, "depth": depth}))
         self._maybe_fail()
         return list(self._topology.get(entity_id, []))
 
@@ -186,9 +183,7 @@ class FakeMemoryStore:
         self.resolutions: list[tuple[str, str, str]] = []
         self.fail_on_match: Exception | None = None
 
-    def match(
-        self, signature: ProblemSignature, *, threshold: float | None = None
-    ) -> Match | None:
+    def match(self, signature: ProblemSignature, *, threshold: float | None = None) -> Match | None:
         if self.fail_on_match is not None:
             raise self.fail_on_match
         if self.match_to_return is None:

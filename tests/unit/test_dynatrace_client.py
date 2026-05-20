@@ -59,16 +59,12 @@ def test_get_problem_context_returns_typed_problem_context(monkeypatch):
                 "title": "latency spike",
                 "severityLevel": "PERFORMANCE",
                 "startTime": "2026-05-17T09:30:00Z",
-                "affectedEntities": [
-                    {"entityId": {"id": "SERVICE-ABC"}, "type": "SERVICE"}
-                ],
+                "affectedEntities": [{"entityId": {"id": "SERVICE-ABC"}, "type": "SERVICE"}],
             },
             {  # impacted-entities DQL
                 "records": [{"entity.id": "SERVICE-ABC", "entity.name": "payment"}]
             },
-            {  # event-window DQL
-                "records": [{"event": "deploy", "ts": "2026-05-17T09:25:00Z"}]
-            },
+            {"records": [{"event": "deploy", "ts": "2026-05-17T09:25:00Z"}]},  # event-window DQL
         ]
     )
     client = DynatraceClient(_cfg())
@@ -166,3 +162,94 @@ def test_tool_allowlist_rejects_calls_to_unlisted_tools(monkeypatch):
     # silently call into the MCP server with a banned tool name.
     with pytest.raises(PermissionError):
         client.post_problem_comment("P-1", "hello")
+
+
+def test_execute_dql_returns_empty_result_when_mcp_records_are_empty(monkeypatch):
+    mcp = _ScriptedMCP([{"records": []}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    result = client.execute_dql(DQLPlan(query="fetch logs | limit 0"))
+    assert result.columns == ()
+    assert result.rows == ()
+    assert result.execution_ms == 0
+
+
+def test_get_topology_neighbors_drops_neighbors_exceeding_depth(monkeypatch):
+    mcp = _ScriptedMCP(
+        [
+            {
+                "neighbors": [
+                    {"entityId": "S1", "type": "SERVICE", "name": "n1", "distance": 1},
+                    {"entityId": "S99", "type": "SERVICE", "name": "n99", "distance": 99},
+                ]
+            }
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    neighbors = client.get_topology_neighbors("SERVICE-ABC", depth=1)
+    assert [n.entity_id for n in neighbors] == ["S1"]
+
+
+def test_post_problem_comment_returns_comment_id_from_mcp_response(monkeypatch):
+    mcp = _ScriptedMCP([{"commentId": "C-42"}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    comment_id = client.post_problem_comment("P-1", "diagnosis")
+    assert comment_id == "C-42"
+
+
+def test_close_invokes_underlying_mcp_close_and_clears_cache(monkeypatch):
+    """Idempotent + safe even if invoked twice."""
+
+    class _CloseMCP:
+        def __init__(self) -> None:
+            self.closed = 0
+            self.calls: list[tuple[str, dict]] = []
+
+        def call_tool(self, name: str, arguments: dict) -> dict:
+            self.calls.append((name, arguments))
+            return {
+                "problemId": "P-1",
+                "title": "x",
+                "severityLevel": "ERROR",
+                "startTime": "2026-05-17T09:30:00Z",
+                "affectedEntities": [],
+            }
+
+        def close(self) -> None:
+            self.closed += 1
+
+    mcp = _CloseMCP()
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    # Prime the cache so .close() also clears it.
+    monkeypatch.setattr(
+        client,
+        "_problem_context_cache",
+        {"P-1": object()},
+        raising=False,
+    )
+    client.close()
+    assert mcp.closed == 1
+    # Second call is a no-op (idempotent).
+    client.close()
+    assert mcp.closed == 1
+
+
+def test_tool_allowlist_permits_listed_methods(monkeypatch):
+    """When the requested tool is in the allowlist, the call proceeds normally."""
+    mcp = _ScriptedMCP([{"records": [{"x": 1}]}])
+    client = DynatraceClient(_cfg(tool_allowlist=("execute_dql",)))
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    result = client.execute_dql(DQLPlan(query="fetch logs | limit 1"))
+    assert result.rows == ((1,),)
+
+
+def test_execute_dql_propagates_domain_dynatrace_unavailable_unchanged(monkeypatch):
+    """Tools that already raise DynatraceUnavailable surface without rewrapping."""
+    mcp = _ScriptedMCP([DynatraceUnavailable("upstream gone")])
+    client = DynatraceClient(_cfg(max_retries=0))
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    with pytest.raises(DynatraceUnavailable, match="upstream gone"):
+        client.execute_dql(DQLPlan(query="fetch logs"))

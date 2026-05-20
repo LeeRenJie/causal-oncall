@@ -46,3 +46,45 @@ def test_to_markdown_renders_supporting_evidence_under_its_hypothesis():
     brief = make_brief(hypotheses=(h,))
     md = brief.to_markdown()
     assert "5xx burst on /charge starting 09:28:00" in md
+
+
+def test_to_markdown_renders_refuting_evidence_when_present():
+    ref = make_evidence(
+        summary="No deploys in window — refutes deploy-correlation",
+        stance="refutes",
+        confidence=0.4,
+    )
+    h = make_hypothesis(refuting=(ref,))
+    brief = make_brief(hypotheses=(h,))
+    md = brief.to_markdown()
+    assert "Refuting evidence" in md
+    assert "No deploys in window" in md
+
+
+def test_to_markdown_renders_supporting_evidence_with_dynatrace_links():
+    ev = make_evidence(
+        summary="5xx burst",
+        links=("https://abc.live.dynatrace.com/ui/problems/P-007",),
+    )
+    h = make_hypothesis(supporting=(ev,))
+    brief = make_brief(hypotheses=(h,))
+    md = brief.to_markdown()
+    assert "[Open in Dynatrace]" in md
+    assert "abc.live.dynatrace.com" in md
+
+
+def test_to_markdown_lists_unresolved_questions_when_present():
+    brief = make_brief()
+    from causal_oncall.domain.brief import Brief
+
+    enriched = Brief(
+        problem_id=brief.problem_id,
+        generated_at=brief.generated_at,
+        ranked_hypotheses=brief.ranked_hypotheses,
+        top_recommendation=brief.top_recommendation,
+        memory_short_circuit=brief.memory_short_circuit,
+        unresolved_questions=("Was the deploy rolled back?",),
+    )
+    md = enriched.to_markdown()
+    assert "Open questions for the on-call" in md
+    assert "Was the deploy rolled back?" in md
