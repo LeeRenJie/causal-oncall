@@ -312,8 +312,23 @@ async def webhook_dynatrace_problem(request: Request) -> JSONResponse:
         msg_ref = wiring.slack.post_brief(brief, wiring.slack._config.brief_channel_id)
         response["slack_message_ts"] = msg_ref.message_ts
     if wiring.dynatrace is not None:
-        comment_id = wiring.dynatrace.post_problem_comment(brief.problem_id, brief.to_markdown())
-        response["dynatrace_comment_id"] = comment_id
+        # W2-S5 reframe: write-back is a Grail CUSTOM_INFO event, not a
+        # problem comment. The orchestrator already calls
+        # send_investigation_event when ``dynatrace=`` is wired into it;
+        # the app-layer call here is the explicit path for the curl smoke
+        # to surface the resulting investigation_id in the JSON response.
+        hypothesis_summary = (
+            "\n".join(
+                f"#{h.rank} {h.key}: {h.title} (score={h.score:.2f})"
+                for h in brief.ranked_hypotheses
+            )
+            or brief.top_recommendation
+        )
+        event_id = wiring.dynatrace.send_investigation_event(
+            brief.problem_id, brief.to_markdown(), hypothesis_summary
+        )
+        response["dynatrace_investigation_id"] = event_id.investigation_id
+        response["dynatrace_upstream_reference"] = event_id.upstream_reference
     return JSONResponse(response)
 
 

@@ -349,3 +349,148 @@ def test_orchestrator_memory_hit_brief_ready_event_has_top_hypothesis():
     orch.handle(_PROBLEM_EVENT)
     kinds = [k for _pid, k, _data in captured]
     assert kinds[-1] == "brief-ready"
+
+
+# ---------- W2-S4 (reframed) + W2-S5: Grail-event write-back ----------
+#
+# The W2-S4 write-back surface is the Dynatrace Events API v2 ingest via
+# the MCP ``send_event`` tool — NOT the absent ``post_problem_comment``
+# tool of pre-W2-S0 plans. The orchestrator hands the brief markdown +
+# a one-line hypothesis summary to ``DynatraceClient.send_investigation_event``
+# which returns a typed ``EventId``. Failure swallowing semantics are
+# unchanged.
+
+
+def _make_orchestrator_with_dynatrace(dynatrace, *, memory=None, specialists=None):
+    from causal_oncall.orchestrator import Orchestrator, OrchestratorConfig
+
+    return Orchestrator(
+        memory=memory or FakeMemoryStore(),
+        specialists=specialists or [_StubSpecialist("triage", make_evidence(specialist="triage"))],
+        synthesizer=FakeSynthesizer(),
+        tracer=FakePhoenixTracer(),
+        config=OrchestratorConfig(),
+        dynatrace=dynatrace,
+    )
+
+
+def test_orchestrator_writes_brief_back_as_grail_event():
+    """W2-S5: write-back goes via send_investigation_event."""
+    from tests.conftest import FakeDynatraceClient
+
+    fd = FakeDynatraceClient()
+    orch = _make_orchestrator_with_dynatrace(fd)
+    orch.handle(_PROBLEM_EVENT)
+    # Exactly one send_investigation_event call landed.
+    posts = [c for c in fd.calls if c[0] == "send_investigation_event"]
+    assert len(posts) == 1
+    assert posts[0][1]["problem_id"] == "P-1"
+    # The body forwarded to the fake is the brief's markdown + a
+    # one-line summary of the ranked hypotheses.
+    assert len(fd._events) == 1
+    _problem_id, brief_md, hypothesis_summary = fd._events[0]
+    assert brief_md  # non-empty
+    assert hypothesis_summary  # non-empty
+
+
+def test_orchestrator_write_back_includes_ranked_hypotheses_in_summary():
+    """The hypothesis_summary forwarded to Dynatrace carries the ranked-list TL;DR."""
+    from tests.conftest import FakeDynatraceClient
+
+    fd = FakeDynatraceClient()
+    h_a = make_hypothesis(key="primary", title="Primary hypothesis", rank=1, score=0.81)
+    h_b = make_hypothesis(key="alt", title="Alt hypothesis", rank=2, score=0.55)
+    synth = FakeSynthesizer(brief_to_return=make_brief(problem_id="P-1", hypotheses=(h_a, h_b)))
+    orch = _make_orchestrator_with_dynatrace(fd)
+    orch._synthesizer = synth  # type: ignore[attr-defined]
+    orch.handle(_PROBLEM_EVENT)
+    _problem_id, _brief_md, hypothesis_summary = fd._events[0]
+    assert "primary" in hypothesis_summary
+    assert "alt" in hypothesis_summary
+    # Score shows up rendered to two decimals.
+    assert "0.81" in hypothesis_summary
+
+
+def test_orchestrator_write_back_swallows_dynatrace_unavailable():
+    """The brief must still ship even if the Dynatrace write-back fails."""
+    from causal_oncall.domain.exceptions import DynatraceUnavailable
+    from causal_oncall.dynatrace_client import EventId
+    from tests.conftest import FakeDynatraceClient
+
+    fd = FakeDynatraceClient()
+
+    def _broken_post(_problem_id: str, _brief_md: str, _hypothesis_summary: str) -> EventId:
+        raise DynatraceUnavailable("send_event scope expired")
+
+    fd.send_investigation_event = _broken_post  # type: ignore[method-assign]
+    orch = _make_orchestrator_with_dynatrace(fd)
+    # Must not raise — the brief still returns.
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief is not None
+
+
+def test_orchestrator_write_back_swallows_rate_limited():
+    """Same swallowing contract for the rate-limit failure mode."""
+    from causal_oncall.domain.exceptions import RateLimited
+    from causal_oncall.dynatrace_client import EventId
+    from tests.conftest import FakeDynatraceClient
+
+    fd = FakeDynatraceClient()
+
+    def _ratelimited(_problem_id: str, _brief_md: str, _hypothesis_summary: str) -> EventId:
+        raise RateLimited("429", retry_after_seconds=1.0)
+
+    fd.send_investigation_event = _ratelimited  # type: ignore[method-assign]
+    orch = _make_orchestrator_with_dynatrace(fd)
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief is not None
+
+
+def test_orchestrator_writes_brief_back_on_memory_short_circuit_path_too():
+    """W2-S4: pre-flight hits still get written back so the problem record is consistent."""
+    from tests.conftest import FakeDynatraceClient
+
+    fd = FakeDynatraceClient()
+    sig = make_signature()
+    rec = IncidentRecord(
+        incident_id="prior-1",
+        signature=sig,
+        brief=make_brief(),
+        opened_at=datetime(2026, 5, 1, tzinfo=UTC),
+        resolved_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix="Increased pool size",
+    )
+    memory = FakeMemoryStore(
+        match_to_return=Match(record=rec, similarity=0.95, prior_occurrences=14)
+    )
+    orch = _make_orchestrator_with_dynatrace(fd, memory=memory)
+    orch.handle(_PROBLEM_EVENT)
+    posts = [c for c in fd.calls if c[0] == "send_investigation_event"]
+    assert len(posts) == 1
+
+
+def test_orchestrator_summary_falls_back_to_top_recommendation_when_no_hypotheses():
+    """If a memory-short-circuit brief has no ranked hypotheses, the summary
+    falls back to the top_recommendation rather than empty string."""
+    from causal_oncall.domain.brief import Brief
+    from tests.conftest import FakeDynatraceClient
+
+    fd = FakeDynatraceClient()
+    bare_brief = Brief(
+        problem_id="P-BARE",
+        generated_at=datetime(2026, 5, 17, 9, 31, tzinfo=UTC),
+        ranked_hypotheses=(),
+        top_recommendation="Fallback recommendation only",
+    )
+    orch = _make_orchestrator_with_dynatrace(fd)
+    orch._write_back_to_dynatrace(bare_brief)
+    _problem_id, _brief_md, hypothesis_summary = fd._events[0]
+    assert hypothesis_summary == "Fallback recommendation only"
+
+
+def test_orchestrator_without_dynatrace_skips_write_back():
+    """W1 default code path — no dynatrace, no event, no error."""
+    orch = _make_orchestrator()  # no dynatrace passed
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief is not None

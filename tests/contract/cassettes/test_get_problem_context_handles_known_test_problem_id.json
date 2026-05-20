@@ -1,52 +1,30 @@
 [
     {
-        "tool": "get_problem_details",
+        "tool": "list_problems",
         "args": {
-            "problem_id": "PROBLEM-CASSETTE-001"
+            "additionalFilter": "problem.id == \"PROBLEM-CASSETTE-001\"",
+            "maxProblemsToDisplay": 1
         },
         "response": {
-            "problemId": "PROBLEM-CASSETTE-001",
-            "title": "Synthetic cassette problem - response time degradation on payment-service",
-            "severityLevel": "PERFORMANCE",
-            "startTime": "2026-05-20T03:14:15.926Z",
-            "affectedEntities": [
-                {
-                    "entityId": {
-                        "id": "SERVICE-CASSETTE-PAYMENTS"
-                    },
-                    "type": "SERVICE"
-                }
-            ]
+            "raw": "No problems found"
         }
     },
     {
         "tool": "execute_dql",
         "args": {
-            "query": "fetch entities | filter problemId == 'PROBLEM-CASSETTE-001'"
+            "dqlStatement": "fetch dt.davis.problems | filter problem.id == \"PROBLEM-CASSETTE-001\" | expand affected_entity_ids"
         },
         "response": {
-            "records": [
-                {
-                    "entity.id": "SERVICE-CASSETTE-PAYMENTS",
-                    "entity.name": "payment-service",
-                    "entity.type": "SERVICE"
-                }
-            ]
+            "raw": "\ud83d\udcca **DQL Query Results**\n\n- **Scanned Records:** 0\n- **Scanned Bytes:** 0.00 GB (Session total: 0.00 GB / 10 GB budget, 0.0% used)\n    \ud83d\udca1 **No Data consumed:** This query did not consume any data.\n\n\ud83d\udccb **Query Results**: (0 records) \u2014 rendered by the MCP App UI below.\n\n> \u2139\ufe0f The MCP App is rendering the results interactively. Do NOT generate Mermaid diagrams, ASCII charts, or markdown tables from this data."
         }
     },
     {
         "tool": "execute_dql",
         "args": {
-            "query": "fetch events | filter problemId == 'PROBLEM-CASSETTE-001'"
+            "dqlStatement": "fetch events | filter problem.id == \"PROBLEM-CASSETTE-001\""
         },
         "response": {
-            "records": [
-                {
-                    "event.kind": "DEPLOY",
-                    "event.timestamp": "2026-05-20T03:05:00.000Z",
-                    "deployment.version": "v412"
-                }
-            ]
+            "raw": "\ud83d\udcca **DQL Query Results**\n\n- **Scanned Records:** 0\n- **Scanned Bytes:** 0.00 GB (Session total: 0.00 GB / 10 GB budget, 0.0% used)\n    \ud83d\udca1 **No Data consumed:** This query did not consume any data.\n\n\ud83d\udccb **Query Results**: (0 records) \u2014 rendered by the MCP App UI below.\n\n> \u2139\ufe0f The MCP App is rendering the results interactively. Do NOT generate Mermaid diagrams, ASCII charts, or markdown tables from this data."
         }
     }
 ]

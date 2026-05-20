@@ -1,0 +1,21 @@
+[
+    {
+        "tool": "send_event",
+        "args": {
+            "eventType": "CUSTOM_INFO",
+            "title": "Causal On-Call investigation: PROBLEM-CASSETTE-001",
+            "entitySelector": "type(SERVICE),tag(\"causal-oncall.problem_id:PROBLEM-CASSETTE-001\")",
+            "properties": {
+                "investigation_id": "causal-oncall-PROBLEM-CASSETTE-001-cassette",
+                "generated_by": "causal-oncall",
+                "schema_version": "1",
+                "event_subtype": "causal-oncall.investigation-complete",
+                "hypothesis_summary": "Cassette smoke summary",
+                "brief_md": "Cassette brief markdown placeholder"
+            }
+        },
+        "response": {
+            "raw": "Event sent successfully!\nReport count: 0\n\nNote: Events are processed asynchronously. Use the correlation ID to track the event if needed."
+        }
+    }
+]

@@ -2,8 +2,9 @@
 
 Hides: the memory pre-flight short-circuit, specialist dispatch order
 and rate-limit pacing, partial-failure consolidation, hypothesis-
-rejection re-planning, synthesis invocation, and the post-investigation
-record-write back to the memory store.
+rejection re-planning, synthesis invocation, the post-investigation
+record-write back to the memory store, and the Grail-event write-back
+that carries the brief to the Dynatrace problem timeline.
 
 Specialists run **sequentially** — Dynatrace SaaS enforces a 50-req/min
 sliding-window per-tenant rate limit, and parallel fan-out blew the
@@ -20,9 +21,14 @@ from datetime import UTC, datetime
 
 from causal_oncall.domain.brief import Brief, Hypothesis
 from causal_oncall.domain.evidence import Evidence
-from causal_oncall.domain.exceptions import MemoryStoreUnavailable
+from causal_oncall.domain.exceptions import (
+    DynatraceUnavailable,
+    MemoryStoreUnavailable,
+    RateLimited,
+)
 from causal_oncall.domain.incident_record import IncidentRecord, Match
 from causal_oncall.domain.problem_signature import ProblemSignature
+from causal_oncall.dynatrace_client import DynatraceClient
 from causal_oncall.memory_store import MemoryStore
 from causal_oncall.phoenix_tracer import PhoenixTracer
 from causal_oncall.specialists.base import Specialist
@@ -50,6 +56,10 @@ class Orchestrator:
       4. Hand the bag of Evidence to the Synthesizer.
       5. Persist the resulting Brief + signature to the memory store
          so future incidents can short-circuit on this one.
+      6. Optionally ingest a CUSTOM_INFO Grail event carrying the
+         brief markdown + hypothesis summary, so the brief lands on
+         the Dynatrace problem timeline alongside any
+         operator-authored notes (W2-S4 reframe).
     """
 
     def __init__(
@@ -61,6 +71,7 @@ class Orchestrator:
         tracer: PhoenixTracer,
         config: OrchestratorConfig | None = None,
         trace_broadcaster: TraceBroadcaster | None = None,
+        dynatrace: DynatraceClient | None = None,
     ) -> None:
         self._memory = memory
         self._specialists = tuple(specialists)
@@ -70,6 +81,13 @@ class Orchestrator:
         # Optional broadcaster for the live trace UI. When unset, the
         # orchestrator runs in headless mode (W1 + tests rely on this).
         self._broadcaster = trace_broadcaster
+        # Optional Dynatrace write-back: when set, every brief is
+        # ingested as a CUSTOM_INFO Grail event tagged with the
+        # originating problem id and carrying a causal-oncall
+        # investigation_id. Idempotent — re-posting the same brief on
+        # the same problem returns the same investigation_id without a
+        # second MCP round-trip (see DynatraceClient.send_investigation_event).
+        self._dynatrace = dynatrace
         # In-process cache of the most recent investigation's signature +
         # collected evidence, keyed on problem_id. Powers the replan path
         # without re-hitting Dynatrace when only the synthesizer needs to
@@ -89,6 +107,7 @@ class Orchestrator:
                 {"prior_occurrences": match.prior_occurrences, "similarity": match.similarity},
             )
             brief = self._brief_from_memory(signature, match)
+            self._write_back_to_dynatrace(brief)
             self._emit_brief_ready_and_close(brief)
             return brief
 
@@ -97,6 +116,7 @@ class Orchestrator:
         brief = self._synthesizer.compose(signature, evidences, memory_short_circuit=False)
         self._persist(signature, brief)
         self._last_evidence[signature.problem_id] = (signature, tuple(evidences))
+        self._write_back_to_dynatrace(brief)
         self._emit_brief_ready_and_close(brief)
         return brief
 
@@ -157,6 +177,44 @@ class Orchestrator:
         if self._broadcaster is None:
             return
         self._broadcaster.publish(problem_id, TraceEvent(kind=kind, data=data))  # type: ignore[arg-type]
+
+    def _write_back_to_dynatrace(self, brief: Brief) -> None:
+        """Ingest the brief as a Grail CUSTOM_INFO event, swallowing failure.
+
+        Best-effort by design (PLAN W2-S4 done-means: "failure of this
+        step does not block Slack delivery"). DynatraceClient handles
+        idempotency on identical brief content, so a second call with the
+        same brief is a no-op rather than a duplicate.
+        """
+        if self._dynatrace is None:
+            return
+        try:
+            self._dynatrace.send_investigation_event(
+                brief.problem_id,
+                brief.to_markdown(),
+                self._summarize_hypotheses(brief),
+            )
+        except (DynatraceUnavailable, RateLimited):
+            # Event write-back is a delivery channel, not a hard dep.
+            # The brief still ships via Slack + persistence; the Phoenix
+            # span captures the partial.
+            return
+
+    @staticmethod
+    def _summarize_hypotheses(brief: Brief) -> str:
+        """One-line-per-hypothesis summary fed to the Grail event property.
+
+        Stays under ``send_investigation_event``'s 1500-char defensive
+        truncation. Operators get the ranked-list TL;DR in the Events
+        API timeline; the full brief markdown is in the sibling
+        ``brief_md`` property.
+        """
+        if not brief.ranked_hypotheses:
+            return brief.top_recommendation
+        lines = [
+            f"#{h.rank} {h.key}: {h.title} (score={h.score:.2f})" for h in brief.ranked_hypotheses
+        ]
+        return "\n".join(lines)
 
     def _emit_brief_ready_and_close(self, brief: Brief) -> None:
         if self._broadcaster is None:

@@ -3,6 +3,12 @@
 The client is the only door to Dynatrace; its behaviors below are
 load-bearing for the agent's safety. Real MCP I/O is faked at the
 ``_MCPProcess`` protocol level so these tests stay deterministic.
+
+W2-S5 realigns the tested tools to MCP v1.8.5's actual surface:
+``list_problems`` + ``execute_dql`` replace the absent
+``get_problem_details`` / ``get_topology_neighbors`` tools, and the new
+``send_investigation_event`` replaces the absent ``post_problem_comment``
+write surface with a CUSTOM_INFO event ingest.
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ from causal_oncall.dynatrace_client import (
     DQLPlan,
     DynatraceClient,
     DynatraceClientConfig,
+    Entity,
+    EventId,
 )
 
 
@@ -51,15 +59,22 @@ class _ScriptedMCP:
     def close(self) -> None: ...
 
 
-def test_get_problem_context_returns_typed_problem_context(monkeypatch):
+def test_get_problem_context_returns_typed_problem_context_via_list_problems(monkeypatch):
+    """W2-S5: get_problem_context hydrates via list_problems + 2 execute_dql."""
     mcp = _ScriptedMCP(
         [
-            {  # get_problem_details
-                "problemId": "P-1",
-                "title": "latency spike",
-                "severityLevel": "PERFORMANCE",
-                "startTime": "2026-05-17T09:30:00Z",
-                "affectedEntities": [{"entityId": {"id": "SERVICE-ABC"}, "type": "SERVICE"}],
+            {  # list_problems with additionalFilter
+                "problems": [
+                    {
+                        "problemId": "P-1",
+                        "title": "latency spike",
+                        "severityLevel": "PERFORMANCE",
+                        "startTime": "2026-05-17T09:30:00Z",
+                        "affectedEntities": [
+                            {"entityId": {"id": "SERVICE-ABC"}, "type": "SERVICE"}
+                        ],
+                    }
+                ]
             },
             {  # impacted-entities DQL
                 "records": [{"entity.id": "SERVICE-ABC", "entity.name": "payment"}]
@@ -68,13 +83,102 @@ def test_get_problem_context_returns_typed_problem_context(monkeypatch):
         ]
     )
     client = DynatraceClient(_cfg())
-    # The implementation under TDD will accept dependency injection of
-    # the MCP process; tests rely on that seam.
     monkeypatch.setattr(client, "_mcp", mcp, raising=False)
 
     ctx = client.get_problem_context("P-1")
     assert ctx.signature.problem_id == "P-1"
     assert any(e.get("entity.id") == "SERVICE-ABC" for e in ctx.impacted_entities)
+    assert any(e.get("event") == "deploy" for e in ctx.events_in_window)
+    # Tool sequence: list_problems then two execute_dql.
+    assert [name for name, _ in mcp.calls] == ["list_problems", "execute_dql", "execute_dql"]
+    # Arg-shape contract: additionalFilter carries the single-id predicate.
+    assert "P-1" in mcp.calls[0][1]["additionalFilter"]
+    assert mcp.calls[0][1]["maxProblemsToDisplay"] == 1
+
+
+def test_get_problem_context_synthesizes_signature_on_prose_envelope(monkeypatch):
+    """Empty / unfilterable list_problems response falls through to a synthetic
+    signature so downstream specialists never see a None / partial context."""
+    mcp = _ScriptedMCP(
+        [
+            {"raw": "No problems found"},  # list_problems empty trial tenant
+            {"raw": "0 records"},
+            {"raw": "0 records"},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    ctx = client.get_problem_context("P-UNKNOWN")
+    assert ctx.signature.problem_id == "P-UNKNOWN"
+    assert ctx.impacted_entities == ()
+    assert ctx.events_in_window == ()
+
+
+def test_get_problem_context_handles_items_array_alias(monkeypatch):
+    """Some MCP builds wrap the array as ``items`` instead of ``problems``."""
+    mcp = _ScriptedMCP(
+        [
+            {
+                "items": [
+                    {
+                        "title": "items-shape",
+                        "severityLevel": "ERROR",
+                        "startTime": "2026-05-17T09:30:00Z",
+                        "affectedEntities": [],
+                    }
+                ]
+            },
+            {"records": []},
+            {"records": []},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    ctx = client.get_problem_context("P-ITEMS")
+    # Backfills the inbound problem_id since the record omitted it.
+    assert ctx.signature.problem_id == "P-ITEMS"
+    assert ctx.signature.title == "items-shape"
+
+
+def test_get_problem_context_handles_records_array_alias(monkeypatch):
+    """Some MCP builds wrap the array as ``records`` instead of ``problems``."""
+    mcp = _ScriptedMCP(
+        [
+            {
+                "records": [
+                    {
+                        "title": "records-shape",
+                        "severityLevel": "RESOURCE",
+                        "startTime": "2026-05-17T09:30:00Z",
+                        "affectedEntities": [],
+                    }
+                ]
+            },
+            {"records": []},
+            {"records": []},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    ctx = client.get_problem_context("P-RECORDS")
+    assert ctx.signature.title == "records-shape"
+
+
+def test_get_problem_context_ignores_non_dict_first_record(monkeypatch):
+    """Pathological ``problems`` array entries (not dicts) still degrade cleanly."""
+    mcp = _ScriptedMCP(
+        [
+            {"problems": ["unexpected-string-row"]},
+            {"records": []},
+            {"records": []},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    ctx = client.get_problem_context("P-WEIRD")
+    assert ctx.signature.problem_id == "P-WEIRD"
+    # Synthetic title since no usable record could be coerced.
+    assert "P-WEIRD" in ctx.signature.title
 
 
 def test_execute_dql_retries_on_transient_429_with_exponential_backoff(monkeypatch):
@@ -113,12 +217,23 @@ def test_execute_dql_maps_unknown_mcp_error_to_dynatrace_unavailable(monkeypatch
 
 
 def test_get_topology_neighbors_respects_depth(monkeypatch):
+    """W2-S5: topology now reads via execute_dql against smartscape tables."""
     mcp = _ScriptedMCP(
         [
             {
-                "neighbors": [
-                    {"entityId": "S1", "type": "SERVICE", "name": "n1", "distance": 1},
-                    {"entityId": "S2", "type": "SERVICE", "name": "n2", "distance": 2},
+                "records": [
+                    {
+                        "id": "S1",
+                        "entity.type": "SERVICE",
+                        "entity.name": "n1",
+                        "distance": 1,
+                    },
+                    {
+                        "id": "S2",
+                        "entity.type": "SERVICE",
+                        "entity.name": "n2",
+                        "distance": 2,
+                    },
                 ]
             }
         ]
@@ -129,17 +244,61 @@ def test_get_topology_neighbors_respects_depth(monkeypatch):
     neighbors = client.get_topology_neighbors("SERVICE-ABC", depth=2)
     # All returned entities must have distance <= depth.
     assert all(n.distance <= 2 for n in neighbors)
+    # The MCP tool invoked is execute_dql against the smartscape table.
+    assert mcp.calls[0][0] == "execute_dql"
+    assert "dt.entity.service" in mcp.calls[0][1]["dqlStatement"]
+    assert "SERVICE-ABC" in mcp.calls[0][1]["dqlStatement"]
+
+
+def test_get_topology_neighbors_collapses_prose_envelope_to_empty(monkeypatch):
+    """Empty trial tenant smartscape returns the prose envelope (W2-S0 finding)."""
+    mcp = _ScriptedMCP([{"raw": "Scanned 0 records..."}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    assert client.get_topology_neighbors("SERVICE-ABC", depth=1) == []
+
+
+def test_get_topology_neighbors_falls_back_to_entity_id_key(monkeypatch):
+    """Some smartscape responses key the id field as ``entityId`` instead of ``id``."""
+    mcp = _ScriptedMCP(
+        [
+            {
+                "records": [
+                    {
+                        "entityId": "S-fallback",
+                        "name": "fallback",
+                        "type": "SERVICE",
+                        "distance": 1,
+                    }
+                ]
+            }
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    neighbors = client.get_topology_neighbors("SERVICE-ABC", depth=1)
+    assert neighbors == [
+        Entity(
+            entity_id="S-fallback",
+            entity_type="SERVICE",
+            display_name="fallback",
+            distance=1,
+        )
+    ]
 
 
 def test_repeated_get_problem_context_is_cached_within_one_client(monkeypatch):
     mcp = _ScriptedMCP(
         [
             {
-                "problemId": "P-1",
-                "title": "x",
-                "severityLevel": "ERROR",
-                "startTime": "2026-05-17T09:30:00Z",
-                "affectedEntities": [],
+                "problems": [
+                    {
+                        "title": "x",
+                        "severityLevel": "ERROR",
+                        "startTime": "2026-05-17T09:30:00Z",
+                        "affectedEntities": [],
+                    }
+                ]
             },
             {"records": []},
             {"records": []},
@@ -152,16 +311,17 @@ def test_repeated_get_problem_context_is_cached_within_one_client(monkeypatch):
     b = client.get_problem_context("P-1")
     assert a is b or a == b
     # Only one hydration round-trip even though we asked twice.
-    detail_calls = [c for c in mcp.calls if c[0] == "get_problem_details"]
-    assert len(detail_calls) == 1
+    list_calls = [c for c in mcp.calls if c[0] == "list_problems"]
+    assert len(list_calls) == 1
 
 
 def test_tool_allowlist_rejects_calls_to_unlisted_tools(monkeypatch):
     client = DynatraceClient(_cfg(tool_allowlist=("execute_dql",)))
-    # Posting a comment is not in the allowlist — must refuse rather than
-    # silently call into the MCP server with a banned tool name.
+    # send_investigation_event maps to send_event, which is not in the
+    # allowlist — must refuse rather than silently call into the MCP
+    # subprocess with a banned tool name.
     with pytest.raises(PermissionError):
-        client.post_problem_comment("P-1", "hello")
+        client.send_investigation_event("P-1", "diagnosis", "summary")
 
 
 def test_execute_dql_returns_empty_result_when_mcp_records_are_empty(monkeypatch):
@@ -210,9 +370,19 @@ def test_get_topology_neighbors_drops_neighbors_exceeding_depth(monkeypatch):
     mcp = _ScriptedMCP(
         [
             {
-                "neighbors": [
-                    {"entityId": "S1", "type": "SERVICE", "name": "n1", "distance": 1},
-                    {"entityId": "S99", "type": "SERVICE", "name": "n99", "distance": 99},
+                "records": [
+                    {
+                        "id": "S1",
+                        "entity.type": "SERVICE",
+                        "entity.name": "n1",
+                        "distance": 1,
+                    },
+                    {
+                        "id": "S99",
+                        "entity.type": "SERVICE",
+                        "entity.name": "n99",
+                        "distance": 99,
+                    },
                 ]
             }
         ]
@@ -223,12 +393,150 @@ def test_get_topology_neighbors_drops_neighbors_exceeding_depth(monkeypatch):
     assert [n.entity_id for n in neighbors] == ["S1"]
 
 
-def test_post_problem_comment_returns_comment_id_from_mcp_response(monkeypatch):
-    mcp = _ScriptedMCP([{"commentId": "C-42"}])
+def test_send_investigation_event_returns_event_id_with_investigation_id(monkeypatch):
+    """W2-S4 reframe: write-back is a CUSTOM_INFO Grail event, not a comment."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{"correlationId": "EV-42"}]}])
     client = DynatraceClient(_cfg())
     monkeypatch.setattr(client, "_mcp", mcp, raising=False)
-    comment_id = client.post_problem_comment("P-1", "diagnosis")
-    assert comment_id == "C-42"
+    event_id = client.send_investigation_event("P-1", "brief markdown", "hypotheses summary")
+    assert isinstance(event_id, EventId)
+    assert event_id.investigation_id.startswith("causal-oncall-P-1-")
+    assert event_id.upstream_reference == "EV-42"
+
+
+def test_send_investigation_event_passes_send_event_with_expected_shape(monkeypatch):
+    """W2-S5: send_event call must be a CUSTOM_INFO with title, entitySelector,
+    properties carrying brief_md + hypothesis_summary + investigation_id + schema."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{"correlationId": "EV-1"}]}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    client.send_investigation_event("P-WIRE", "FULL BRIEF MD", "HYPO SUMMARY")
+
+    tool, args = mcp.calls[0]
+    assert tool == "send_event"
+    assert args["eventType"] == "CUSTOM_INFO"
+    assert "P-WIRE" in args["title"]
+    assert "causal-oncall.problem_id:P-WIRE" in args["entitySelector"]
+    props = args["properties"]
+    assert props["generated_by"] == "causal-oncall"
+    assert props["schema_version"] == "1"
+    assert props["brief_md"] == "FULL BRIEF MD"
+    assert props["hypothesis_summary"] == "HYPO SUMMARY"
+    assert props["investigation_id"].startswith("causal-oncall-P-WIRE-")
+    # Every property must be a string per the v1.8.5 input schema.
+    assert all(isinstance(v, str) for v in props.values())
+
+
+def test_send_investigation_event_is_idempotent_for_identical_brief(monkeypatch):
+    """Re-sending the same brief on the same problem returns the cached EventId."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{"correlationId": "EV-once"}]}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    first = client.send_investigation_event("P-1", "same brief", "summary")
+    second = client.send_investigation_event("P-1", "same brief", "summary")
+    assert first == second
+    # MCP only saw the call once — the dedup happened client-side.
+    assert len(mcp.calls) == 1
+
+
+def test_send_investigation_event_isolates_dedup_by_problem_id(monkeypatch):
+    """Same brief body on different problems is two distinct ingests."""
+    mcp = _ScriptedMCP(
+        [
+            {"eventIngestResults": [{"correlationId": "EV-a"}]},
+            {"eventIngestResults": [{"correlationId": "EV-b"}]},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    a = client.send_investigation_event("P-A", "same body", "summary")
+    b = client.send_investigation_event("P-B", "same body", "summary")
+    assert a.investigation_id != b.investigation_id
+    assert a.upstream_reference == "EV-a"
+    assert b.upstream_reference == "EV-b"
+    assert len(mcp.calls) == 2
+
+
+def test_send_investigation_event_distinct_briefs_yield_distinct_investigation_ids(monkeypatch):
+    """Distinct brief content → distinct hash-derived investigation_id suffixes."""
+    mcp = _ScriptedMCP(
+        [
+            {"eventIngestResults": [{"correlationId": "EV-1"}]},
+            {"eventIngestResults": [{"correlationId": "EV-2"}]},
+        ]
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    first = client.send_investigation_event("P-1", "brief one", "summary")
+    second = client.send_investigation_event("P-1", "brief two", "summary")
+    assert first.investigation_id != second.investigation_id
+
+
+def test_send_investigation_event_truncates_large_brief_md(monkeypatch):
+    """Brief markdown is truncated to the per-property defensive ceiling."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{"correlationId": "EV"}]}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    huge = "x" * 20000
+    client.send_investigation_event("P-1", huge, "summary")
+    props = mcp.calls[0][1]["properties"]
+    assert len(props["brief_md"]) <= 8000
+    assert len(props["hypothesis_summary"]) <= 1500
+
+
+def test_send_investigation_event_handles_prose_only_response(monkeypatch):
+    """When MCP returns a prose-only envelope (no eventIngestResults), the
+    client still produces an EventId with the prose snippet as upstream_reference."""
+    mcp = _ScriptedMCP([{"raw": "Event ingested OK"}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == "Event ingested OK"
+
+
+def test_send_investigation_event_handles_unknown_response_shape(monkeypatch):
+    """Wholly-unknown envelopes degrade to an empty upstream_reference."""
+    mcp = _ScriptedMCP([{"something": "unexpected"}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == ""
+
+
+def test_send_investigation_event_skips_blank_ingest_result_entries(monkeypatch):
+    """An eventIngestResults entry without correlationId/status falls through to ``""``."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{}]}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == ""
+
+
+def test_send_investigation_event_uses_status_when_correlationId_missing(monkeypatch):
+    """eventIngestResults can carry only a ``status`` (older MCP builds)."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{"status": "OK"}]}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == "OK"
+
+
+def test_send_investigation_event_handles_non_list_eventIngestResults(monkeypatch):
+    """Pathological ``eventIngestResults`` shapes (not a list) fall through."""
+    mcp = _ScriptedMCP([{"eventIngestResults": "single-string-instead-of-list"}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == ""
+
+
+def test_send_investigation_event_handles_eventIngestResults_non_dict_first(monkeypatch):
+    """``eventIngestResults`` array entry not a dict falls through."""
+    mcp = _ScriptedMCP([{"eventIngestResults": ["string-row"]}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == ""
 
 
 def test_close_invokes_underlying_mcp_close_and_clears_cache(monkeypatch):
@@ -242,11 +550,14 @@ def test_close_invokes_underlying_mcp_close_and_clears_cache(monkeypatch):
         def call_tool(self, name: str, arguments: dict) -> dict:
             self.calls.append((name, arguments))
             return {
-                "problemId": "P-1",
-                "title": "x",
-                "severityLevel": "ERROR",
-                "startTime": "2026-05-17T09:30:00Z",
-                "affectedEntities": [],
+                "problems": [
+                    {
+                        "title": "x",
+                        "severityLevel": "ERROR",
+                        "startTime": "2026-05-17T09:30:00Z",
+                        "affectedEntities": [],
+                    }
+                ]
             }
 
         def close(self) -> None:
@@ -276,6 +587,15 @@ def test_tool_allowlist_permits_listed_methods(monkeypatch):
     monkeypatch.setattr(client, "_mcp", mcp, raising=False)
     result = client.execute_dql(DQLPlan(query="fetch logs | limit 1"))
     assert result.rows == ((1,),)
+
+
+def test_tool_allowlist_permits_send_event_when_listed(monkeypatch):
+    """send_investigation_event resolves to the send_event tool for the allowlist."""
+    mcp = _ScriptedMCP([{"eventIngestResults": [{"correlationId": "EV"}]}])
+    client = DynatraceClient(_cfg(tool_allowlist=("send_event",)))
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    event_id = client.send_investigation_event("P-1", "brief", "summary")
+    assert event_id.upstream_reference == "EV"
 
 
 def test_execute_dql_propagates_domain_dynatrace_unavailable_unchanged(monkeypatch):

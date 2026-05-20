@@ -20,7 +20,7 @@ from causal_oncall.domain.evidence import Evidence
 from causal_oncall.domain.exceptions import DynatraceUnavailable, RateLimited
 from causal_oncall.domain.incident_record import IncidentRecord, Match
 from causal_oncall.domain.problem_signature import ProblemSignature
-from causal_oncall.dynatrace_client import DQLPlan, Entity, ProblemContext, QueryResult
+from causal_oncall.dynatrace_client import DQLPlan, Entity, EventId, ProblemContext, QueryResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -122,7 +122,12 @@ class FakeDynatraceClient:
         self._dql_results: dict[str, QueryResult] = {}
         self._topology: dict[str, list[Entity]] = {}
         self._problem_contexts: dict[str, ProblemContext] = {}
-        self._comments: list[tuple[str, str]] = []
+        # W2-S5 reframe: write-back surface is the Grail event stream
+        # (CUSTOM_INFO via send_event), not problem comments. Same shape
+        # of dedup state mirrors the real DynatraceClient so tests can
+        # assert on either the per-call audit (``calls``) or the
+        # accumulated event list (``_events``).
+        self._events: list[tuple[str, str, str]] = []
         self.fail_with: Exception | None = None
         self.rate_limit_after: int | None = None
 
@@ -158,10 +163,15 @@ class FakeDynatraceClient:
         self._maybe_fail()
         return list(self._topology.get(entity_id, []))
 
-    def post_problem_comment(self, problem_id: str, markdown: str) -> str:
-        self.calls.append(("post_problem_comment", {"problem_id": problem_id}))
-        self._comments.append((problem_id, markdown))
-        return f"comment-{len(self._comments)}"
+    def send_investigation_event(
+        self, problem_id: str, brief_md: str, hypothesis_summary: str
+    ) -> EventId:
+        self.calls.append(("send_investigation_event", {"problem_id": problem_id}))
+        self._events.append((problem_id, brief_md, hypothesis_summary))
+        return EventId(
+            investigation_id=f"causal-oncall-{problem_id}-fake{len(self._events):04x}",
+            upstream_reference=f"event-{len(self._events)}",
+        )
 
     def close(self) -> None:
         self.calls.append(("close", {}))

@@ -31,6 +31,7 @@ from causal_oncall.dynatrace_client import (
     DQLPlan,
     DynatraceClient,
     DynatraceClientConfig,
+    EventId,
     ProblemContext,
     QueryResult,
 )
@@ -85,19 +86,14 @@ def test_execute_dql_against_real_mcp_returns_a_valid_query_result(monkeypatch):
 def test_get_problem_context_handles_known_test_problem_id(monkeypatch):
     """Replay the recorded ``get_problem_context`` cassette and validate the hydration.
 
-    NOTE (W2-S0 drift, see BUILD-LOG.md): Live Dynatrace MCP v1.8.5 does
-    NOT expose a ``get_problem_details`` tool — the closest read is
-    ``list_problems`` with a single-id filter. The synthetic cassette
-    here preserves the *parser shape* contract while
-    ``DynatraceClient.get_problem_context`` still calls the old tool
-    name. A follow-up slice (W2-S5 candidate) will rewire the client
-    to ``list_problems`` and re-record this cassette live. Out of
-    W2-S0 scope per directive ("don't touch any other slice").
-
-    The live counterpart cassette ``_live_get_problem_context.json``
-    (captured from the trial tenant) is held in the same directory for
-    when the rewire lands — it documents the empty-tenant + new-tool
-    response shape.
+    W2-S5 realigned this test to the live MCP v1.8.5 tool surface: the
+    client now drives ``list_problems`` (with a single-id
+    ``additionalFilter``) plus two ``execute_dql`` queries to hydrate
+    impacted entities + the event window. The empty trial tenant's
+    cassette exercises the prose-envelope code paths end-to-end:
+    list_problems returns ``{"raw": "No problems found"}`` and both
+    DQLs collapse to empty record sets. The parser must synthesize a
+    minimal signature from the inbound problem_id rather than raise.
     """
     mcp = CassetteMCP(cassette_path("test_get_problem_context_handles_known_test_problem_id"))
     client = DynatraceClient(_cfg())
@@ -108,12 +104,55 @@ def test_get_problem_context_handles_known_test_problem_id(monkeypatch):
     assert isinstance(ctx, ProblemContext)
     assert isinstance(ctx.signature, ProblemSignature)
     assert ctx.signature.problem_id == "PROBLEM-CASSETTE-001"
-    assert ctx.impacted_entities, "impacted entities must hydrate from the events DQL"
-    # The cassette includes a DEPLOY event — verify it landed in the window.
-    assert any(any(value == "DEPLOY" for value in event.values()) for event in ctx.events_in_window)
-    # Tool-call sequence: 1 get_problem_details + 2 execute_dql hydrations.
+    # Empty trial tenant — both hydration DQLs return prose envelopes,
+    # which the client collapses to empty tuples without raising.
+    assert ctx.impacted_entities == ()
+    assert ctx.events_in_window == ()
+    # Tool-call sequence: list_problems first, then two execute_dql hydrations.
     tool_names = [name for name, _ in mcp.calls]
-    assert tool_names == ["get_problem_details", "execute_dql", "execute_dql"]
+    assert tool_names == ["list_problems", "execute_dql", "execute_dql"]
+    # First call carried the single-id additionalFilter (per W2-S5).
+    assert "PROBLEM-CASSETTE-001" in mcp.calls[0][1]["additionalFilter"]
+
+
+def test_send_investigation_event_against_real_mcp_returns_an_event_id(monkeypatch):
+    """Replay the recorded ``send_event`` cassette and validate the typed ``EventId``.
+
+    The W2-S5 reframe: the agent's write-back surface is the Events API
+    v2 ingest (``send_event`` MCP tool), not the absent
+    ``post_problem_comment`` tool. The empty trial tenant accepts the
+    CUSTOM_INFO ingest and returns a prose confirmation; the client
+    must surface a typed ``EventId`` with a deterministic
+    ``investigation_id`` and the prose snippet as
+    ``upstream_reference``.
+    """
+    mcp = CassetteMCP(
+        cassette_path("test_send_investigation_event_against_real_mcp_returns_an_event_id")
+    )
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+
+    event_id = client.send_investigation_event(
+        "PROBLEM-CASSETTE-001",
+        "Cassette brief markdown placeholder",
+        "Cassette smoke summary",
+    )
+
+    assert isinstance(event_id, EventId)
+    assert event_id.investigation_id.startswith("causal-oncall-PROBLEM-CASSETTE-001-")
+    # Empty trial tenant → MCP returns a prose confirmation; we surface
+    # whatever the upstream said for human cross-reference.
+    assert "Event sent" in event_id.upstream_reference or event_id.upstream_reference
+    # Exactly one MCP round-trip — no fan-out, no retry.
+    assert len(mcp.calls) == 1
+    tool, args = mcp.calls[0]
+    assert tool == "send_event"
+    assert args["eventType"] == "CUSTOM_INFO"
+    # Title must mention the problem id so on-call ops can scan the
+    # event timeline by problem.
+    assert "PROBLEM-CASSETTE-001" in args["title"]
+    # Properties must be string-only per the v1.8.5 input schema.
+    assert all(isinstance(v, str) for v in args["properties"].values())
 
 
 @pytest.mark.requires_creds

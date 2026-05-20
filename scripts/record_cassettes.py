@@ -7,6 +7,11 @@ the contract tests assert on, and writes them to
 ``tests/contract/cassettes/<test_name>.json`` so CI can replay them
 without creds.
 
+W2-S5 realignment: the cassettes now reflect the v1.8.5 tool surface
+(``list_problems`` + ``execute_dql`` + ``send_event``); the removed
+``get_problem_details`` / ``get_topology_neighbors`` /
+``post_problem_comment`` tools no longer appear anywhere.
+
 Usage::
 
     # one-time install of the SDK in the project venv:
@@ -79,30 +84,27 @@ def _record_or_die() -> int:  # pragma: no cover  # human-driven script
             # 2. Record a list_problems + two hydration DQLs — feeds
             #    test_get_problem_context_handles_known_test_problem_id.
             #
-            #    Drift: MCP v1.8.5 does NOT expose ``get_problem_details``.
-            #    The closest read is ``list_problems`` (returns prose summary
-            #    of recent problems). When the tenant has no open problems
-            #    the live MCP returns the literal string ``"No problems found"``
-            #    — captured into the cassette so replay tests degrade
-            #    deterministically (same path empty trial tenants will hit).
-            problems = await session.call_tool("list_problems", arguments={})
-            problems_payload = _extract_payload(problems)
-            problem_id = _pick_problem_id(problems_payload)
-            if problem_id is None:
-                print(
-                    "WARN: tenant has zero open problems; using fallback "
-                    "synthetic problem id. Re-run when a problem is open.",
-                )
-                problem_id = "PROBLEM-CASSETTE-001"
+            #    v1.8.5 has no get_problem_details tool — the closest read
+            #    is list_problems with a single-id additionalFilter.
+            problems_meta = await session.call_tool("list_problems", arguments={})
+            problems_payload = _extract_payload(problems_meta)
+            problem_id = _pick_problem_id(problems_payload) or "PROBLEM-CASSETTE-001"
 
             ctx_calls = []
             for tool, args in [
-                ("list_problems", {}),
+                (
+                    "list_problems",
+                    {
+                        "additionalFilter": f'problem.id == "{problem_id}"',
+                        "maxProblemsToDisplay": 1,
+                    },
+                ),
                 (
                     "execute_dql",
                     {
                         "dqlStatement": (
                             f'fetch dt.davis.problems | filter problem.id == "{problem_id}"'
+                            " | expand affected_entity_ids"
                         )
                     },
                 ),
@@ -113,16 +115,29 @@ def _record_or_die() -> int:  # pragma: no cover  # human-driven script
             ]:
                 call = await session.call_tool(tool, arguments=args)
                 ctx_calls.append({"tool": tool, "args": args, "response": _extract_payload(call)})
-            # Drift-isolated filename: the live cassette is parked under
-            # ``_live_get_problem_context.json`` so the active contract
-            # test (which still drives the old ``get_problem_details``
-            # tool name) continues to replay against the synthetic
-            # cassette committed under
-            # ``test_get_problem_context_handles_known_test_problem_id.json``.
-            # When the DynatraceClient gets rewired to use ``list_problems``
-            # in a follow-up slice, swap the filename here back to the
-            # canonical test name.
-            _write_cassette("_live_get_problem_context", ctx_calls)
+            _write_cassette("test_get_problem_context_handles_known_test_problem_id", ctx_calls)
+
+            # 3. Record a send_event invocation — feeds
+            #    test_send_investigation_event_against_real_mcp_returns_an_event_id.
+            event_args = {
+                "eventType": "CUSTOM_INFO",
+                "title": f"Causal On-Call investigation: {problem_id}",
+                "entitySelector": (f'type(SERVICE),tag("causal-oncall.problem_id:{problem_id}")'),
+                "properties": {
+                    "investigation_id": f"causal-oncall-{problem_id}-cassette",
+                    "generated_by": "causal-oncall",
+                    "schema_version": "1",
+                    "event_subtype": "causal-oncall.investigation-complete",
+                    "hypothesis_summary": "Cassette smoke summary",
+                    "brief_md": "Cassette brief markdown placeholder",
+                },
+            }
+            event_call = await session.call_tool("send_event", arguments=event_args)
+            event_response = _extract_payload(event_call)
+            _write_cassette(
+                "test_send_investigation_event_against_real_mcp_returns_an_event_id",
+                [{"tool": "send_event", "args": event_args, "response": event_response}],
+            )
 
             print(
                 f"\nRecorded cassettes to {CASSETTE_DIR}. "
