@@ -9,11 +9,13 @@ Two wiring paths:
   * Production: env-driven (real Dynatrace MCP, real Mongo Atlas, real
     Gemini, real Slack). Enabled by setting the full env block from
     ``.env.example``.
-  * Dev (``CAUSAL_ONCALL_DEV_MODE=1``): in-process fakes that replay a
-    seeded payload through the full agent pipeline, persist the brief
-    markdown to ``./out/briefs/<problem_id>.md``, and return its URL.
-    W1-S3 done-means lives here — the curl smoke test resolves against
-    this path.
+  * Dev / demo (``CAUSAL_ONCALL_DEV_MODE=1`` or
+    ``CAUSAL_ONCALL_DEMO_MODE=true``): in-process fakes from
+    ``_demo_wiring.py`` that replay a seeded payload through the full
+    agent pipeline, persist the brief markdown to
+    ``./out/briefs/<problem_id>.md``, and return its URL. W1-S3 done-means
+    lives here (curl smoke). W4-S1 Cloud Run uses the DEMO_MODE gate as
+    the judges' demo URL while Dynatrace OAuth client setup is pending.
 """
 
 from __future__ import annotations
@@ -151,75 +153,27 @@ def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boo
 
 
 def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local curl demo
-    """Dev wiring: in-process fakes for a no-creds W1-S3 curl smoke test.
+    """Dev/demo wiring: in-process fakes for the no-creds curl + Cloud Run demo path.
 
-    Uses the same FakeDynatraceClient + FakeMemoryStore + stubbed Gemini
-    that the integration test relies on. This keeps the W1-S3 curl path
-    demoable without standing up Dynatrace + Mongo + Gemini accounts.
+    W1-S3: local curl smoke (`CAUSAL_ONCALL_DEV_MODE=1`).
+    W4-S1: Cloud Run live demo URL (`CAUSAL_ONCALL_DEMO_MODE=true`),
+           when Dynatrace OAuth client credentials are not yet
+           available — see BUILD-LOG.md W4-S1.
+
+    The fakes live in ``_demo_wiring.py`` under ``src/`` so the Docker
+    image (which excludes ``tests/``) can boot this path. Production
+    wiring path (real Dynatrace MCP, Mongo Atlas, Gemini, Slack) lives
+    in ``_build_production_wiring`` and stays unchanged.
     """
-    from tests.conftest import (  # type: ignore[import-not-found]
-        FakeDynatraceClient,
-        FakeMemoryStore,
-        FakePhoenixTracer,
-        make_signature,
+    from causal_oncall._demo_wiring import (
+        _DemoMemoryStore,
+        _DemoPhoenixTracer,
+        build_demo_dynatrace_client,
+        demo_llm_call,
     )
-
-    from causal_oncall.dynatrace_client import Entity, ProblemContext, QueryResult
     from causal_oncall.specialists.base import Specialist
 
-    fd = FakeDynatraceClient()
-    sig = make_signature()
-    fd.stub_problem_context(
-        "-9223372036854775807_v2",
-        ProblemContext(
-            signature=sig,
-            impacted_entities=({"id": "SERVICE-ABC123"},),
-            events_in_window=(),
-        ),
-    )
-    fd.stub_problem_context(
-        "P-001",
-        ProblemContext(
-            signature=sig,
-            impacted_entities=({"id": "SERVICE-ABC123"},),
-            events_in_window=(),
-        ),
-    )
-    fd.stub_dql(
-        "fetch logs",
-        QueryResult(columns=("ts", "level"), rows=((1, "ERROR"),), execution_ms=12),
-    )
-    fd.stub_dql(
-        "fetch events",
-        QueryResult(
-            columns=("event_type", "ts"),
-            rows=(("DEPLOY", 1), ("CHANGE", 2)),
-            execution_ms=15,
-        ),
-    )
-    fd.stub_dql(
-        "fetch metric",
-        QueryResult(
-            columns=("metric", "deviation"),
-            rows=(("service.responseTime", 4.2),),
-            execution_ms=22,
-        ),
-    )
-    fd.stub_dql(
-        "fetch security.events",
-        QueryResult(columns=("cve",), rows=(("CVE-2026-1234",),), execution_ms=10),
-    )
-    fd.stub_topology(
-        "SERVICE-ABC123",
-        [
-            Entity(
-                entity_id="SERVICE-DB",
-                entity_type="SERVICE",
-                display_name="payments-db",
-                distance=1,
-            )
-        ],
-    )
+    fd = build_demo_dynatrace_client()
 
     synthesizer = Synthesizer(
         SynthesizerConfig(
@@ -227,18 +181,7 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
             dynatrace_base_url="https://abc.live.dynatrace.com",
         )
     )
-
-    def _llm(_prompt: str) -> dict:
-        return {
-            "hypotheses": {
-                "db_pool_exhaustion": {
-                    "title": "DB connection pool exhausted by deploy v412",
-                    "next_action": "Roll back deploy v412 on payment-service.",
-                }
-            }
-        }
-
-    synthesizer._llm_call = _llm  # type: ignore[method-assign]
+    synthesizer._llm_call = demo_llm_call  # type: ignore[method-assign]
 
     specialists: list[Specialist] = [
         TriageSpecialist(fd),  # type: ignore[arg-type]
@@ -250,15 +193,15 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
 
     broadcaster = TraceBroadcaster()
     # W3-S5: the dashboard route reads accuracy data from a real
-    # PhoenixTracer. Dev mode points at an empty JSONL outcome store
-    # (stdout fallback recorder); the live-demo path uses
+    # PhoenixTracer. Dev/demo mode points at an empty JSONL outcome
+    # store (stdout fallback recorder); the live-demo path uses
     # ``/dashboard?demo=true`` which never touches this tracer.
     dev_tracer = PhoenixTracer(_phoenix_config_from_env())
     orch = Orchestrator(
-        memory=FakeMemoryStore(),  # type: ignore[arg-type]
+        memory=_DemoMemoryStore(),  # type: ignore[arg-type]
         specialists=specialists,
         synthesizer=synthesizer,
-        tracer=FakePhoenixTracer(),  # type: ignore[arg-type]
+        tracer=_DemoPhoenixTracer(),  # type: ignore[arg-type]
         config=OrchestratorConfig(),
         trace_broadcaster=broadcaster,
     )
@@ -273,7 +216,14 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
 
 
 def _build_wiring() -> _Wiring:  # pragma: no cover  # router based on env mode
-    if os.environ.get("CAUSAL_ONCALL_DEV_MODE", "").strip() in {"1", "true", "yes"}:
+    # W4-S1: both ``CAUSAL_ONCALL_DEV_MODE`` (legacy local-dev gate)
+    # and ``CAUSAL_ONCALL_DEMO_MODE`` (Cloud Run live demo gate) route
+    # to the in-process demo wiring. Either being truthy is enough.
+    truthy = {"1", "true", "yes"}
+    if (
+        os.environ.get("CAUSAL_ONCALL_DEV_MODE", "").strip().lower() in truthy
+        or os.environ.get("CAUSAL_ONCALL_DEMO_MODE", "").strip().lower() in truthy
+    ):
         return _build_dev_wiring()
     return _build_production_wiring()
 

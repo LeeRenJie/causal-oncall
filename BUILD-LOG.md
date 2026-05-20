@@ -703,3 +703,79 @@ $ # Expected: 73% headline, 41% caption, rising green sparkline, 147/107 subtitl
 - **No `<noscript>` fallback.** If JavaScript is disabled the page is empty under the card chrome. Acceptable for a demo running on the builder's own browser; documented here as known.
 
 
+---
+
+## W4 — building phase begins 2026-05-20
+
+### W4-S1 — Cloud Run deploy of the judges' demo URL — 2026-05-20
+
+**Commit:** (this commit — `feat(W4-S1): production deploy to Cloud Run`)
+
+**LIVE URL:** **https://causal-oncall-856589756095.us-central1.run.app** — Cloud Run service `causal-oncall` in `us-central1`, project `causal-oncall-2026`, revision `causal-oncall-00001-x4z`, `--allow-unauthenticated`, `--min-instances=0 --max-instances=2`, 2GiB / 2vCPU, 300s timeout. This is the judges' demo URL — stays up until submission.
+
+**Built:** Verified the existing Node-bundled Dockerfile (Python 3.12-slim base + Node 20 from NodeSource + Python venv from stage-1 builder + uvicorn entrypoint on `$PORT`); added writable `/tmp` env defaults for the brief-output dir and Phoenix outcome-store path so the Cloud Run ephemeral filesystem doesn't trip the write path. Lifted the dev-wiring fakes out of `tests/conftest.py` into a new `src/causal_oncall/_demo_wiring.py` module so the production Docker image (which deliberately excludes `tests/` per `.dockerignore`) can boot the in-process demo path. Wired a new `CAUSAL_ONCALL_DEMO_MODE=true` env-mode alias alongside the legacy `CAUSAL_ONCALL_DEV_MODE=1` gate so `app.py::_build_wiring` routes to the same dev wiring under either trigger. Deployed via `gcloud run deploy --source=.` + Cloud Build; image built clean; first revision serving 100% of traffic.
+
+**Smoke test results (live URL):**
+- `GET /dashboard?demo=true` — HTTP 200, HTML body contains `Causal On-Call`, `sparkline`, `setInterval`, `demo=true`, `accuracy`, `rolling` (the W3-S5 page chrome).
+- `GET /dashboard/data?demo=true` — HTTP 200, JSON `{"rolling_accuracy":0.73,"total_briefs":147,"confirmed_count":107,"trend":[0.41 ... 0.73],"starting_accuracy":0.41,"trend_length":30}` — **wow moment #4 (41% to 73% rolling accuracy curve) live**.
+- `POST /webhook/dynatrace-problem` with `tests/fixtures/incidents/payment_latency_spike.json` — HTTP 200 in ~5s. Top hypothesis: `db_pool_exhaustion`, rank 1, score 0.83. Next action: "Roll back deploy v412 on payment-service." Full ranked markdown returned, four supporting specialists (triage, topology, deploy_correlation, anomaly_window) + one vuln_sec stance. Matches the fixture's `expected_top_hypothesis_key`. **Demo path is live end-to-end.**
+- `GET /trace/-9223372036854775807_v2` — HTTP 200 (W2-S2 live trace UI HTML).
+- `GET /healthz` — HTTP 404 from Google Frontend (intercepted before reaching the container — `/healthz` is reserved-ish in Cloud Run/Knative path matching). `GET /health` reaches FastAPI and returns FastAPI 404. The dashboard + webhook smokes above are the canonical liveness checks for this service. Not a blocker for the demo; a `GET /` 404 from FastAPI confirms the container is up.
+
+**Decisions made:**
+
+- **Dev/demo wiring lifted into `src/causal_oncall/_demo_wiring.py`.** The previous `_build_dev_wiring()` imported from `tests.conftest`, but the production Docker image excludes `tests/` (per `.dockerignore`'s `tests/` line — keeping the image lean is right). Re-COPYing `tests/` would couple production deploys to pytest scaffolding. The new module is `# pragma: no cover` (it's deployment glue, exercised by manual smoke; not on the critical-path coverage gate). Public surface: `_DemoDynatraceClient`, `_DemoMemoryStore`, `_DemoPhoenixTracer`, `build_demo_dynatrace_client()`, `demo_llm_call()`, `make_signature()`. Mirrors the surface `tests/conftest.py` already had, narrowed to what app.py wiring consumes.
+
+- **`CAUSAL_ONCALL_DEMO_MODE=true` env-mode added as alias for `CAUSAL_ONCALL_DEV_MODE=1`.** The strategist's W4-S1 brief specified `CAUSAL_ONCALL_DEMO_MODE=true` for the Cloud Run env block; the existing code used `CAUSAL_ONCALL_DEV_MODE` for the same intent. Rather than rename one or duplicate the docs, the router in `_build_wiring()` accepts either gate. Existing local curl smoke command (W1-S3) still works unchanged.
+
+- **`/tmp/briefs` + `/tmp/phoenix_outcomes.jsonl` set as Docker ENV defaults.** Cloud Run filesystem is read-only outside `/tmp`. The brief-output dir (`BRIEFS_OUTPUT_DIR`) and Phoenix outcome store (`PHOENIX_OUTCOME_STORE_PATH`) both write at runtime — pinned to `/tmp` paths via the Dockerfile. Local dev still defaults to `./out/*` (relative paths) so this doesn't affect non-container runs.
+
+- **Cloud Run env vars (set via `--set-env-vars`):**
+  `GOOGLE_CLOUD_PROJECT=causal-oncall-2026`, `GOOGLE_CLOUD_LOCATION=us-central1`, `GOOGLE_GENAI_USE_VERTEXAI=TRUE`, `MONGODB_DB=causal_oncall`, `DT_ENVIRONMENT=https://jea41717.apps.dynatrace.com`, `CAUSAL_ONCALL_DEMO_MODE=true`, `BRIEFS_OUTPUT_DIR=/tmp/briefs`, `PHOENIX_OUTCOME_STORE_PATH=/tmp/phoenix_outcomes.jsonl`.
+
+- **Secret Manager:** `mongodb-uri` secret created and versioned (raw SRV string without the spike's `&tlsInsecure=true` workaround — Cloud Run egress to Mongo Atlas has no corporate-network TLS-inspection, regular TLS works). **NOT yet bound to the running revision** because the active CAUSAL_ONCALL_DEMO_MODE path uses the in-process `_DemoMemoryStore`. Will bind via `--update-secrets=MONGODB_URI=mongodb-uri:latest` when the OAuth-client blocker (below) is resolved and the service flips to the real production wiring path.
+
+- **Authentication: `--allow-unauthenticated`** per Spike-Day0 pre-approval (same pattern as Spike 05); judges need public access to the demo URL.
+
+**HARD BLOCKER surfaced — Dynatrace OAuth client credentials missing:**
+
+The brief's secret strategy assumed Dynatrace OAuth client credentials would be available in `spike/.env`. They are NOT — `spike/.env` lines 12-14 explicitly note `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` are commented out with "skipped for spike (MCP server falls back to browser OAuth). Will fill in for Week 4 Cloud Run deploy." The spike used browser-OAuth fallback (cached session in the human's browser). **Cloud Run cannot drive a browser OAuth flow** — the MCP server in a serverless container has no display + no cached browser session, so live Dynatrace MCP calls from the Cloud Run image require programmatic OAuth client credentials.
+
+**Mitigation in this deploy:** The service runs in `CAUSAL_ONCALL_DEMO_MODE=true` with in-process `_DemoDynatraceClient` fakes. The demo path is fully functional end-to-end (webhook to orchestrator to 5 specialists to synthesizer to brief + trace SSE + dashboard wow #4). The brief output reflects realistic specialist behavior on the canonical fixture.
+
+**What unblocks live Dynatrace MCP from Cloud Run:** User creates a Dynatrace OAuth client per spike README §1.2 (Account Management to OAuth clients, scopes: `storage:problems:read`, `storage:events:read`, `storage:metrics:read`, `storage:entities:read`, `storage:logs:read`). Then:
+1. `gcloud secrets create dt-oauth-client-id --replication-policy=automatic` then pipe `$ID` to `gcloud secrets versions add dt-oauth-client-id --data-file=-` (same for `dt-oauth-client-secret`).
+2. Re-deploy with `--set-secrets=OAUTH_CLIENT_ID=dt-oauth-client-id:latest,OAUTH_CLIENT_SECRET=dt-oauth-client-secret:latest,MONGODB_URI=mongodb-uri:latest` and drop `CAUSAL_ONCALL_DEMO_MODE=true`.
+3. The production wiring path activates with real Dynatrace MCP + real Mongo Atlas + real Gemini. The `_build_production_wiring()` code path is already in place from W3.
+
+For the judges' demo on submission day, the DEMO_MODE path is acceptable because: the unique-idea wow moments (#1 ranked brief, #2 hypothesis ranking, #3 memory pre-flight badge, #4 self-improvement dashboard 41% to 73%) are all rendered by the agent + presentation code — the Dynatrace MCP is a data source whose output the demo replays through a fixture. Switching to live MCP enriches the demo but is not a precondition for the wow moments to land.
+
+**Test count + coverage:** **268 passing** (same as W3-S5 baseline), 3 skipped (live-only contract), 100% line + 100% branch across all 25 critical-path modules (**1149 stmts** / 200 branches, +7 from the new `_demo_wiring.py` module which is `# pragma: no cover` glue).
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m ruff check src tests scripts
+.venv/Scripts/python.exe -m black --check src tests scripts
+```
+
+**Live smoke test commands (against the deployed URL):**
+```
+curl -sS "https://causal-oncall-856589756095.us-central1.run.app/dashboard?demo=true"
+curl -sS "https://causal-oncall-856589756095.us-central1.run.app/dashboard/data?demo=true"
+curl -sS -X POST "https://causal-oncall-856589756095.us-central1.run.app/webhook/dynatrace-problem" \
+  -H "content-type: application/json" \
+  -d @tests/fixtures/incidents/payment_latency_spike.json
+```
+
+**Demo path impact:** the judges' demo URL is now live. DEMO-SCRIPT.md (W4-S2) will reference the live URL for all four wow moments. The webhook to brief flow takes ~5s on a warm container, well inside the 90-second narrated target.
+
+**Postmortem flags:**
+- **Dynatrace OAuth client is the only blocker** to flipping from `CAUSAL_ONCALL_DEMO_MODE=true` to live production wiring. Tracking as the W4-S1 follow-up; the rewire itself is one `gcloud run services update` command once the OAuth secrets exist.
+- **`/healthz` returns Google-Frontend 404** (intercepted before reaching the container — Cloud Run/Knative path matching reserves it). Non-blocker; the demo smoke uses `/dashboard?demo=true` and the webhook for liveness. A future commit could add `/health` (without z) as the canonical liveness route if a monitoring system needs to probe.
+- **Slack delivery still W2-S3 pending.** The DEMO_MODE wiring returns `slack=None`, so the webhook response omits the `slack_message_ts` field. When W2-S3 lands, secrets `slack-bot-token`, `slack-signing-secret`, `slack-brief-channel-id` will need to be created + bound, and DEMO_MODE will need to be turned off (or made flag-gated per integration).
+- **Cold-start latency:** first request after `min-instances=0` scale-down took ~5s warm-call, plus the ~3-5s build observed during the deploy. For the live demo we can pre-warm by hitting `/dashboard?demo=true` once before the timer starts. Per PLAN R6, can flip to `--min-instances=1` for the demo recording window if needed; daily cost would rise by ~$0.50 — within budget.
+- **Production wiring path is untested in Cloud Run.** The `_build_production_wiring()` code is exercised by unit tests via env-shim mocking, but has never run end-to-end against real Dynatrace MCP + real Mongo + real Gemini on Cloud Run. When the OAuth blocker resolves, a separate dry-run on a throwaway revision is recommended before flipping the demo URL.
+
+

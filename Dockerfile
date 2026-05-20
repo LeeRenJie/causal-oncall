@@ -35,7 +35,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:${PATH}" \
     PORT=8080 \
-    NODE_MAJOR=20
+    NODE_MAJOR=20 \
+    BRIEFS_OUTPUT_DIR=/tmp/briefs \
+    PHOENIX_OUTCOME_STORE_PATH=/tmp/phoenix_outcomes.jsonl
 
 # Install Node 20 LTS from NodeSource. The MCP server is invoked via npx
 # at runtime; the package itself is fetched on first use and then cached
