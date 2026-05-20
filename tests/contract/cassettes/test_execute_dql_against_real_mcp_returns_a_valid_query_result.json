@@ -1,0 +1,19 @@
+[
+    {
+        "tool": "execute_dql",
+        "args": {
+            "query": "fetch logs | limit 1",
+            "parameters": {}
+        },
+        "response": {
+            "records": [
+                {
+                    "timestamp": "2026-05-20T03:14:15.926Z",
+                    "loglevel": "INFO",
+                    "content": "synthetic cassette row - replace via scripts/record_cassettes.py for live"
+                }
+            ],
+            "executionMs": 47
+        }
+    }
+]

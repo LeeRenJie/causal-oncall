@@ -1,0 +1,52 @@
+[
+    {
+        "tool": "get_problem_details",
+        "args": {
+            "problem_id": "PROBLEM-CASSETTE-001"
+        },
+        "response": {
+            "problemId": "PROBLEM-CASSETTE-001",
+            "title": "Synthetic cassette problem - response time degradation on payment-service",
+            "severityLevel": "PERFORMANCE",
+            "startTime": "2026-05-20T03:14:15.926Z",
+            "affectedEntities": [
+                {
+                    "entityId": {
+                        "id": "SERVICE-CASSETTE-PAYMENTS"
+                    },
+                    "type": "SERVICE"
+                }
+            ]
+        }
+    },
+    {
+        "tool": "execute_dql",
+        "args": {
+            "query": "fetch entities | filter problemId == 'PROBLEM-CASSETTE-001'"
+        },
+        "response": {
+            "records": [
+                {
+                    "entity.id": "SERVICE-CASSETTE-PAYMENTS",
+                    "entity.name": "payment-service",
+                    "entity.type": "SERVICE"
+                }
+            ]
+        }
+    },
+    {
+        "tool": "execute_dql",
+        "args": {
+            "query": "fetch events | filter problemId == 'PROBLEM-CASSETTE-001'"
+        },
+        "response": {
+            "records": [
+                {
+                    "event.kind": "DEPLOY",
+                    "event.timestamp": "2026-05-20T03:05:00.000Z",
+                    "deployment.version": "v412"
+                }
+            ]
+        }
+    }
+]

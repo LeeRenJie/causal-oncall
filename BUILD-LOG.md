@@ -116,4 +116,36 @@ If the strategist requires three separate commits, I can split via `git reset --
 3. **Phoenix self-eval upgrade from stdout → real Phoenix SDK exporter** is scheduled for W3-S4; current PhoenixTracer's `_StdoutSpanRecorder` is the W1-only placeholder.
 4. **GitHub Actions CI gate** referenced in PLAN W1-S3 ("CI gate configured at end of W1-S3"). Two workflows exist in `.github/workflows/` (`test.yml`, `lint.yml`, `mutmut.yml`) — need verification on first push. Leaving the push to the user per instructions.
 
+---
+
+## W2 — building phase begins 2026-05-20 (continued)
+
+### Pre-W2 environment observations
+
+- Most of W2-S1 (the 4 remaining specialists + parameterized contract suite + sequential dispatch) was **already shipped in the W1 single-commit**. Re-reading PLAN W2-S1 against the code:
+  - `Topology`, `DeployCorrelation`, `AnomalyWindow`, `VulnSec` all exist and implement `investigate(ProblemSignature) -> Evidence` (verified `src/causal_oncall/specialists/*.py`).
+  - `tests/unit/test_specialists.py` already has the parameterized contract suite over all 5 (`ALL_SPECIALIST_CLASSES = [Triage, Topology, DeployCorrelation, AnomalyWindow, VulnSec]`) with 4 parameterized tests asserting: matching `specialist` name, confidence in `[0,1]`, partial-failure degradation, allowlist conformance.
+  - `Orchestrator._dispatch_specialists` runs all 5 sequentially per the locked rate-limit constraint (`orchestrator.py` lines 120-127).
+  - All 5 specialists + `base.py` have 100% line + branch coverage (verified by the 108-test baseline pre-W2).
+- **W2-S4 partial**: `DynatraceClient.post_problem_comment(problem_id, markdown) -> commentId` exists. NOT yet wired into orchestrator's `handle()` flow with idempotency marker. Will be the W2-S4 commit.
+- **W2-S2 net-new**: SSE stream + live HTML trace UI is not implemented. Will be the W2-S2 commit.
+- **W2-S3 deferred**: Slack workspace gated, not touched.
+
+### W2-S0 — VCR cassette infrastructure — 2026-05-20
+
+**Decision (DEVIATION from PLAN W2-S0 directive):** Live cassette recording requires interactive browser OAuth (the spike's `.env` deliberately does not set `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` per its inline comment — falls back to browser OAuth which an autonomous agent session cannot drive). Implementing the cassette replay infrastructure + structurally-correct synthetic cassettes makes the contract suite green in CI; a one-command live re-recording target (`scripts/record_cassettes.py`) lets the human capture real cassettes in 5 minutes once they're in a session with browser + creds.
+
+**Built:** `tests/contract/cassettes/_cassette.py` — `CassetteMCP` class loads a per-test JSON cassette from `tests/contract/cassettes/<test_name>.json` and replays the recorded `(tool, args) -> response` calls deterministically. Cassettes are tuple-of-call-records JSON (one record = `{"tool", "args", "response"}` or `{"tool", "args", "error"}`). Plus `scripts/record_cassettes.py` — a thin driver that, given live Dynatrace MCP creds, drives the same flows the contract tests assert on and writes the recorded cassettes to disk.
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/contract -v -q   # 2 cassette-replay tests passing
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q  # full suite green
+```
+
+**Postmortem flags:**
+- Confirm with the user: once they sit at the machine with a Dynatrace tenant that has at least one open problem, run `python scripts/record_cassettes.py` to overwrite the synthetic cassettes with real captures.
+- The 5 carry-forward items from SPIKE-DAY0 §"Carry-forward findings" remain unchanged.
+
 
