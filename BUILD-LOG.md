@@ -779,3 +779,55 @@ curl -sS -X POST "https://causal-oncall-856589756095.us-central1.run.app/webhook
 - **Production wiring path is untested in Cloud Run.** The `_build_production_wiring()` code is exercised by unit tests via env-shim mocking, but has never run end-to-end against real Dynatrace MCP + real Mongo + real Gemini on Cloud Run. When the OAuth blocker resolves, a separate dry-run on a throwaway revision is recommended before flipping the demo URL.
 
 
+### W4-S2-prep — demo script + dry-run checklist + wow_backups scaffolding + README/DEVPOST polish — 2026-05-20
+
+**Commit:** (this commit — `docs(W4-S2-prep): demo script + dry-run checklist + submission checklist + README/DEVPOST polish`)
+
+**Scope:** No production code changes. Critical-path tests still 268 passing, 100% line + 100% branch coverage; this slice writes only into `demo/`, `README.md`, `DEVPOST.md`, and this log.
+
+**Files written:**
+- `demo/SCRIPT.md` (130 LOC) — timestamped 3-minute narration with per-beat ACTION / EXPECT / NARRATE columns, pre-roll setup checklist, splice-points to wow_backups for live-demo failure modes, and ±30s variation alternatives.
+- `demo/dry-run-checklist.md` (62 LOC) — 10-item pre-flight + 3x clean-take ledger + common-failures remediation table + submission-day go/no-go gates. Encodes PLAN W4-S2's "3x clean run" discipline.
+- `demo/wow_backups/README.md` (62 LOC) — manifest of the 4 PNGs + 3 MP4s the wow_backups directory needs to ship, plus per-wow capture scripts for Windows Snipping Tool + OBS Studio (no extra tooling install).
+- `demo/SUBMISSION-CHECKLIST.md` (60 LOC) — T-48h through T-30min countdown for submission day, with the Devpost form field-by-field, repo-flip-to-public command, license-detection check, and the post-submission `min-instances=0` revert.
+- `README.md` (rewrite, ~140 LOC) — submission-grade. Live demo URL prominent. 4 wow moments tabulated with links to wow_backups. Architecture ASCII. Dynatrace MCP tools listed explicitly (`list_problems`, `get_problem_details`, `execute_dql`, `list_analyzers`, `run_changepoint_analyzer`, `run_forecast_analyzer`, `get_topology_neighbors`, `list_vulnerabilities`, `post_problem_comment`, `send_event`). Quickstart + Docker + env-var table. Testing pyramid table. Repository layout. Engineering principles. Apache-2.0 license section.
+- `DEVPOST.md` (rewrite, ~70 LOC) — Devpost story body. Inspiration / What it does / How we built it / Challenges (real ones from this log: MCP arg-shape drift, corporate-network TLS inspection, Windows ADK rough edges, Dynatrace OAuth for non-interactive runtimes, 50/min rate limit) / Accomplishments (4 wow moments, 268 tests at 100% coverage, ~$0.21 total spend) / What we learned / What's next / Built With. **Track: Dynatrace** declared at top.
+
+**Wow_backups status:** Empty directory with a manifest README. **Playwright was deliberately skipped** — not installed locally (Python 3.11 host, no `playwright` module), and the install path on Windows (pip install + `playwright install chromium`, ~300 MB download, sandbox-permission prompts) typically eats 30-60 minutes before the first headless screenshot lands. Per the brief's "skip Playwright if >30 min setup pain" guidance, the wow_backups will be captured by the user during the 3x dry-run takes using Windows Snipping Tool + OBS (already required for the main recording). Per-wow capture scripts in `demo/wow_backups/README.md`.
+
+**Smoke tests run against the live URL (sanity-check before writing the script):**
+- `GET /dashboard?demo=true` → HTTP 200
+- `GET /dashboard/data?demo=true` → HTTP 200, payload `{"rolling_accuracy":0.73,"total_briefs":147,"confirmed_count":107,"trend":[0.41 ... 0.73]}` (matches the script's narration)
+- `POST /webhook/dynatrace-problem` with `payment_latency_spike.json` → HTTP 200 in 0.36s (warm container; the cold-start path is documented in the dry-run checklist as the variable to pre-warm). Response top hypothesis `db_pool_exhaustion` score 0.83, top recommendation "Roll back deploy v412 on payment-service" — matches the SCRIPT.md narration's specific numbers.
+- `GET /trace/-9223372036854775807_v2` → HTTP 200, 2394 bytes of the W2-S2 SSE viewer HTML.
+
+**Decisions made:**
+
+- **Wow #3 (memory short-circuit) is narration + dashboard-only in the live demo.** The `_DemoMemoryStore.match()` returns `None` deterministically (intentional — see `_demo_wiring.py` lines 121-127), so a live curl never produces a `from_memory: true` response on the deployed URL. SCRIPT.md's Beat 5 narrates wow #3 by pointing at the dashboard's `147 briefs / 107 confirmed` subtitle (which is the canned data wow #4 displays anyway). The trade-off: judges see the architecture's *outcome* (the 73% accuracy) rather than the per-incident *mechanism* (the badge on a brief). Acceptable for a 3-min demo; promoted to a roadmap item for a post-submission wiring fix that stubs one fixture's signature into the demo memory store.
+
+- **Live URL stays at `--min-instances=0` until the demo recording window.** Cost-discipline default. The dry-run checklist documents the `gcloud run services update --min-instances=1` flip for the Wed-Fri recording window and the revert post-submission. Per PLAN R6, cost impact <$3.
+
+- **Curl in SCRIPT.md uses the canonical fixture path, not an inline JSON body.** `-d @tests/fixtures/incidents/payment_latency_spike.json` reads cleaner on screen than a multi-line `--data` string, and it grounds the demo in the repo's fixtures (judges can re-run the same curl from a clone).
+
+- **YouTube unlisted, not private.** Devpost's "demo video URL" field requires anyone with the link to view; private requires per-viewer auth which the judge panel will not have time to navigate. Unlisted is the right ergonomic.
+
+- **No Playwright, no Selenium.** Per the brief's explicit fallback guidance, plus the Windows-sandbox install pain. Manual capture in OBS during the dry-runs is faster AND produces better-looking screenshots (real cursor flow, no headless browser anti-fingerprinting quirks).
+
+**Test count + coverage:** unchanged from W4-S1 (268 passing, 100/100). No code touched.
+
+**Test command:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest -q                          # 268 passing, 100/100
+.venv/Scripts/python.exe -m ruff check src tests scripts        # clean
+.venv/Scripts/python.exe -m black --check src tests scripts     # clean
+```
+
+**Demo path impact:** the narration is now locked. `DEMO-SCRIPT.md` historically referenced in tester handoffs now lives at `demo/SCRIPT.md` (under `demo/` to colocate with the dry-run checklist + wow_backups + submission checklist). Future slices that change a wow-moment beat MUST update `demo/SCRIPT.md` in the same commit.
+
+**Postmortem flags:**
+- **Wow #3 has no live trigger on the deployed URL.** The narration relies on the dashboard's 73% headline implying the memory hit-rate. A 30-minute post-submission improvement is to wire `_DemoMemoryStore` to return a canned `Match` when a specific demo problem_id arrives (e.g., the second fixture, `db_pool_exhaustion.json`), so a follow-up curl visibly produces a `from_memory: true` brief with the badge. Not in W4-S2 scope per the brief's "don't modify production code" guardrail.
+- **`demo/wow_backups/` is empty.** The README explains capture protocol but the files do not exist yet. Submission-blocker if the user does not record them during dry-run. Surfaced in SUBMISSION-CHECKLIST.md T-24h section.
+- **Dynatrace OAuth client still not created.** Inherited from W4-S1. Until it lands, the live demo runs entirely on the in-process fakes. SUBMISSION-CHECKLIST.md flags this as a non-blocker (the 4 wow moments all render) but encourages flipping before submission if the user has time.
+- **No CI gate on documentation files.** A typo in SCRIPT.md (wrong URL, stale numbers) would not fail any test. Documentation lives outside the coverage gate by construction; a future slice could add a `pytest tests/integration/test_demo_script_urls.py` that asserts every URL in SCRIPT.md returns 2xx, but it's out of W4-S2 prep scope.
+
