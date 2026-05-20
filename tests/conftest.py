@@ -21,6 +21,8 @@ from causal_oncall.domain.exceptions import DynatraceUnavailable, RateLimited
 from causal_oncall.domain.incident_record import IncidentRecord, Match
 from causal_oncall.domain.problem_signature import ProblemSignature
 from causal_oncall.dynatrace_client import DQLPlan, Entity, EventId, ProblemContext, QueryResult
+from causal_oncall.memory_store import MemoryStore, MemoryStoreConfig
+from tests.fakes import FakeEmbedder, FakeMongoClient, FakeMongoCollection
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -301,16 +303,68 @@ def memory_seed_payload() -> list[dict[str, Any]]:
     )
 
 
+# ---------- MemoryStore fixtures (W3-S1) ---------- #
+
+
+def make_memory_store_config(
+    *,
+    match_threshold: float = 0.85,
+    dim: int = 8,
+) -> MemoryStoreConfig:
+    """Build a MemoryStoreConfig pointed at fake-in-memory infrastructure.
+
+    Default dimensions are 8 (not the production 768) so unit tests can
+    spell out short hand-crafted vectors when they want exact control.
+    The contract suite uses the production 768-dim config.
+    """
+    return MemoryStoreConfig(
+        mongodb_uri="mongodb://fake:27017/?fake=true",
+        database="causal_oncall_unit",
+        collection="incidents",
+        vector_index_name="incident_vec_idx",
+        embedding_model_id="fake-embed",
+        embedding_dimensions=dim,
+        match_threshold=match_threshold,
+    )
+
+
+@pytest.fixture
+def fake_mongo_collection() -> FakeMongoCollection:
+    return FakeMongoCollection()
+
+
+@pytest.fixture
+def fake_embedder() -> FakeEmbedder:
+    return FakeEmbedder(dim=8)
+
+
+@pytest.fixture
+def fake_memory_store(
+    fake_mongo_collection: FakeMongoCollection,
+    fake_embedder: FakeEmbedder,
+) -> MemoryStore:
+    """A MemoryStore wired against the in-process Mongo + embedder fakes."""
+    return MemoryStore(
+        make_memory_store_config(),
+        embedder=fake_embedder,
+        collection=fake_mongo_collection,
+    )
+
+
 # Re-export for convenience in test modules.
 __all__ = [
     "DynatraceUnavailable",
     "FakeDynatraceClient",
+    "FakeEmbedder",
     "FakeMemoryStore",
+    "FakeMongoClient",
+    "FakeMongoCollection",
     "FakePhoenixTracer",
     "FakeSynthesizer",
     "RateLimited",
     "make_brief",
     "make_evidence",
     "make_hypothesis",
+    "make_memory_store_config",
     "make_signature",
 ]
