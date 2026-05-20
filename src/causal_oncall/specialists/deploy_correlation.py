@@ -18,6 +18,8 @@ class DeployCorrelationSpecialist(Specialist):
 
     name = "deploy_correlation"
     fallback_hypothesis_key = "deploy_correlation_unavailable"
+    # Deploy-correlation hits the events stream via execute_dql.
+    allowed_dynatrace_methods = ("get_problem_context", "execute_dql")
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
         def _probe() -> Evidence:

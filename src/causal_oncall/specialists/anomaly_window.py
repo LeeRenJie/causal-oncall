@@ -19,6 +19,8 @@ class AnomalyWindowSpecialist(Specialist):
 
     name = "anomaly_window"
     fallback_hypothesis_key = "anomaly_window_unavailable"
+    # Anomaly window pulls SLI golden-signal metrics through execute_dql.
+    allowed_dynatrace_methods = ("get_problem_context", "execute_dql")
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
         def _probe() -> Evidence:

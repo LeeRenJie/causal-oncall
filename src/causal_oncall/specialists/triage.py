@@ -18,6 +18,8 @@ class TriageSpecialist(Specialist):
 
     name = "triage"
     fallback_hypothesis_key = "triage_unavailable"
+    # Triage hydrates the problem context once, then issues one logs DQL.
+    allowed_dynatrace_methods = ("get_problem_context", "execute_dql")
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
         def _probe() -> Evidence:

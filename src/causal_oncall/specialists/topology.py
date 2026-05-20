@@ -17,6 +17,9 @@ class TopologySpecialist(Specialist):
 
     name = "topology"
     fallback_hypothesis_key = "topology_unavailable"
+    # Topology walks the graph via get_topology_neighbors; the problem
+    # context is the only context read it needs from execute_dql land.
+    allowed_dynatrace_methods = ("get_problem_context", "get_topology_neighbors")
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
         def _probe() -> Evidence:

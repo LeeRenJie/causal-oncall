@@ -105,19 +105,40 @@ def test_specialist_falls_back_to_informational_on_dynatrace_partial_failure(cls
     # stance shifts to informational.
     assert ev.stance == "informational"
     assert ev.confidence <= 0.4
+    # W2-S1: the degraded Evidence carries the specialist's fallback key
+    # so the synthesizer can still tell "I didn't get to investigate" apart
+    # from a real hypothesis judgment.
+    assert ev.hypothesis_key == s.fallback_hypothesis_key
+    assert ev.summary, "fallback Evidence must explain why the specialist degraded"
 
 
 @pytest.mark.parametrize("cls", ALL_SPECIALIST_CLASSES, ids=lambda c: c.name)
 def test_specialist_only_calls_allowed_dynatrace_methods(cls):
-    """Specialists must never bypass DynatraceClient (e.g. raw HTTP)."""
+    """Specialists must never bypass DynatraceClient (e.g. raw HTTP) and must
+    stay inside their declared narrow toolset (``allowed_dynatrace_methods``).
+    """
     fd = FakeDynatraceClient()
     _seed_dynatrace(fd)
     s: Specialist = cls(fd)  # type: ignore[arg-type]
     s.investigate(make_signature(problem_id="P-001"))
 
-    allowed = {"get_problem_context", "execute_dql", "get_topology_neighbors"}
+    declared = set(s.allowed_dynatrace_methods)
+    assert declared, f"{cls.__name__} must declare a non-empty allowed_dynatrace_methods"
     used = {name for name, _ in fd.calls}
-    assert used.issubset(allowed), f"Specialist used disallowed methods: {used - allowed}"
+    assert used.issubset(
+        declared
+    ), f"{cls.__name__} called {used - declared!r}; declared {declared!r}"
+
+
+@pytest.mark.parametrize("cls", ALL_SPECIALIST_CLASSES, ids=lambda c: c.name)
+def test_specialist_evidence_has_non_empty_summary(cls):
+    """Every Evidence must carry text the synthesizer can render."""
+    fd = FakeDynatraceClient()
+    _seed_dynatrace(fd)
+    s: Specialist = cls(fd)  # type: ignore[arg-type]
+    ev = s.investigate(make_signature(problem_id="P-001"))
+    assert ev.summary
+    assert ev.hypothesis_key  # non-empty even on the happy path
 
 
 # ----- specialist-specific behaviors -----

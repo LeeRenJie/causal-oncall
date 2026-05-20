@@ -148,4 +148,29 @@ cd causal-oncall
 - Confirm with the user: once they sit at the machine with a Dynatrace tenant that has at least one open problem, run `python scripts/record_cassettes.py` to overwrite the synthetic cassettes with real captures.
 - The 5 carry-forward items from SPIKE-DAY0 §"Carry-forward findings" remain unchanged.
 
+---
+
+### W2-S1 — parameterized contract suite + per-specialist toolset declaration — 2026-05-20
+
+**Commit:** (this commit)
+
+**Built:** Audited the 4 non-Triage specialists shipped in W1 (Topology, DeployCorrelation, AnomalyWindow, VulnSec) against PLAN W2-S1's done-means. Implementation existed; gaps were on the contract-test invariants and per-specialist tool-allowlist documentation. Promoted `Specialist.allowed_dynatrace_methods: tuple[str, ...]` as a class attribute on the base + each subclass; this is the "narrow toolset per spike-discovered tool surface" called out in PLAN. Extended the parameterized contract suite (`tests/unit/test_specialists.py`) with two new assertions per specialist: (a) the degraded Evidence keeps `hypothesis_key == self.fallback_hypothesis_key` and carries a non-empty summary, (b) the happy-path Evidence has a non-empty summary and hypothesis_key. Rewrote `test_specialist_only_calls_allowed_dynatrace_methods` to assert each specialist stays inside its **declared** narrow toolset (was previously checking the union of all DynatraceClient public methods — weaker).
+
+**Decisions made (deviations from PLAN):**
+- **`gemini-3.5-flash` per-specialist model**: not wired this week. Current architecture has specialists as deterministic Python that calls Dynatrace MCP and emits structured Evidence; only the Synthesizer makes LLM calls (locked in UNIQUE_IDEA: "The Synthesizer is the only agent that writes prose. Each specialist returns structured YAML; synthesizer composes the brief."). Adding Flash to specialists would risk a deep-module violation (specialists become LLM-callers). Logged as a postmortem item: revisit when Triage needs Davis CoPilot DQL composition (the only LLM-shaped step in any specialist).
+- **Per-specialist `tool_allowlist` enforced at the DynatraceClient level**: the DynatraceClient already supports `tool_allowlist` at construction; the orchestrator does not currently inject a per-specialist client. Per-specialist clients would make the orchestrator widget-juggle. Instead, the specialist's `allowed_dynatrace_methods` documents the contract, the parameterized test enforces it, and the operator-level `DYNATRACE_MCP_TOOL_ALLOWLIST` env (`.env.example`) bounds the whole agent's surface. This is the deep-module-friendlier path.
+
+**Test count + coverage:** 115 unit + integration + 2 cassette-contract passing (+5 new), 3 skipped (live creds). 100% line + branch coverage on every critical-path module.
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m pytest tests/unit/test_specialists.py -v
+```
+
+**Postmortem flags:**
+- "Triage may need Flash→Pro" candidate from W1-postmortem not triggered — Triage's hypothesis-key emission ("db_pool_exhaustion") is deterministic from the fixture; we don't see >20% quality regression yet because no live MCP responses are flowing. Re-evaluate after the cassette re-record.
+- All 5 specialists currently hardcode `hypothesis_key="db_pool_exhaustion"` (or `"cve_exposure"` for VulnSec) for their primary stance. This is fine for the demo fixture but will need real DQL→hypothesis mapping in W3. Logging as a W2-postmortem candidate.
+
 

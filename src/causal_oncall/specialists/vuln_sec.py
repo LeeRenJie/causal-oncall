@@ -18,6 +18,8 @@ class VulnSecSpecialist(Specialist):
 
     name = "vuln_sec"
     fallback_hypothesis_key = "vuln_sec_unavailable"
+    # Vuln/sec scans the security.events stream via execute_dql.
+    allowed_dynatrace_methods = ("get_problem_context", "execute_dql")
 
     def investigate(self, signature: ProblemSignature) -> Evidence:
         def _probe() -> Evidence:

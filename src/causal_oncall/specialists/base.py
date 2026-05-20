@@ -35,6 +35,12 @@ class Specialist(ABC):
     #: rather than guessing a real root cause.
     fallback_hypothesis_key: str = "unknown"
 
+    #: Subset of ``DynatraceClient`` public methods this specialist is
+    #: permitted to call. Used as documentation + as the contract-test
+    #: oracle for the "specialist-uses-narrow-toolset" invariant. Empty
+    #: tuple = unrestricted (default for the abstract base only).
+    allowed_dynatrace_methods: tuple[str, ...] = ()
+
     def __init__(self, dynatrace: DynatraceClient) -> None:
         self._dynatrace = dynatrace
 
