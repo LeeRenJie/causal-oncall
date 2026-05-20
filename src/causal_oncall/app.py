@@ -205,9 +205,25 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
         config=OrchestratorConfig(),
         trace_broadcaster=broadcaster,
     )
+    # Slack is opt-in even in demo mode: if SLACK_BOT_TOKEN is set we wire
+    # the real SlackNotifier so briefs flow to the configured channel during
+    # the recording. Mongo + Dynatrace stay faked because they're heavier to
+    # bootstrap, but Slack is a single API call per brief — no state, no
+    # subprocess. Falls back to None if any of the 3 env vars is missing.
+    slack: SlackNotifier | None = None
+    if os.environ.get("SLACK_BOT_TOKEN") and os.environ.get(
+        "SLACK_SIGNING_SECRET"
+    ) and os.environ.get("SLACK_BRIEF_CHANNEL_ID"):
+        slack = SlackNotifier(
+            SlackNotifierConfig(
+                bot_token=os.environ["SLACK_BOT_TOKEN"],
+                brief_channel_id=os.environ["SLACK_BRIEF_CHANNEL_ID"],
+                signing_secret=os.environ["SLACK_SIGNING_SECRET"],
+            )
+        )
     return _Wiring(
         orchestrator=orch,
-        slack=None,
+        slack=slack,
         dynatrace=None,
         curator=None,
         trace_broadcaster=broadcaster,
