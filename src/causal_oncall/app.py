@@ -26,6 +26,11 @@ from fastapi import FastAPI, Request  # pragma: no cover
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # pragma: no cover
 
 from causal_oncall.curator import Curator, CuratorConfig  # pragma: no cover
+from causal_oncall.dashboard import (  # pragma: no cover
+    dashboard_payload_from,
+    demo_dashboard_payload,
+    render_dashboard_page,
+)
 from causal_oncall.dynatrace_client import (  # pragma: no cover
     DynatraceClient,
     DynatraceClientConfig,
@@ -63,6 +68,7 @@ class _Wiring:
     dynatrace: DynatraceClient | None
     curator: Curator | None
     trace_broadcaster: TraceBroadcaster
+    tracer: PhoenixTracer
 
 
 def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boot
@@ -140,6 +146,7 @@ def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boo
         dynatrace=dynatrace,
         curator=curator,
         trace_broadcaster=broadcaster,
+        tracer=tracer,
     )
 
 
@@ -242,6 +249,11 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
     ]
 
     broadcaster = TraceBroadcaster()
+    # W3-S5: the dashboard route reads accuracy data from a real
+    # PhoenixTracer. Dev mode points at an empty JSONL outcome store
+    # (stdout fallback recorder); the live-demo path uses
+    # ``/dashboard?demo=true`` which never touches this tracer.
+    dev_tracer = PhoenixTracer(_phoenix_config_from_env())
     orch = Orchestrator(
         memory=FakeMemoryStore(),  # type: ignore[arg-type]
         specialists=specialists,
@@ -256,6 +268,7 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
         dynatrace=None,
         curator=None,
         trace_broadcaster=broadcaster,
+        tracer=dev_tracer,
     )
 
 
@@ -360,3 +373,28 @@ async def trace_stream(problem_id: str) -> StreamingResponse:
             "X-Accel-Buffering": "no",  # disable nginx/proxy buffering
         },
     )
+
+
+@app.get("/dashboard")  # pragma: no cover  # W3-S5 self-improvement dashboard UI
+async def dashboard_page() -> HTMLResponse:
+    """Render the single-page self-improvement dashboard.
+
+    The page calls back to ``GET /dashboard/data`` (optionally with
+    ``?demo=true``) every 30s via vanilla ``fetch`` + ``setInterval``.
+    """
+    return HTMLResponse(render_dashboard_page())
+
+
+@app.get("/dashboard/data")  # pragma: no cover  # W3-S5 JSON data binding
+async def dashboard_data(demo: bool = False) -> JSONResponse:
+    """Return the dashboard payload as JSON.
+
+    With ``?demo=true`` returns the hand-crafted 41% -> 73% curve so the
+    3-minute live demo lands the wow moment without 6 months of real
+    history. Without it, returns a snapshot of the real
+    :class:`PhoenixTracer` outcome store.
+    """
+    if demo:
+        return JSONResponse(demo_dashboard_payload().to_dict())
+    wiring: _Wiring = app.state.wiring
+    return JSONResponse(dashboard_payload_from(wiring.tracer).to_dict())

@@ -643,3 +643,63 @@ cd causal-oncall
 - **Phoenix is the OSS SDK, NOT the partner bucket.** Dynatrace remains the central nervous system of the demo; Phoenix is observability infrastructure only. Partner-bucket integrity intact per UNIQUE_IDEA.
 
 
+---
+
+### W3-S5 — Self-improvement dashboard (HTML page + JSON data binding) — 2026-05-20
+
+**Commit:** `feat(W3-S5): self-improvement dashboard (real + demo mode)`
+
+**Built:** Vanilla single-page HTML dashboard at `GET /dashboard` reading Phoenix accuracy data via `GET /dashboard/data` (JSON), powering wow moment #4 — the rolling top-hypothesis accuracy curve climbing 41% → 73% over the last 30 days. The page renders a hand-painted SVG sparkline (no Chart.js, no CDN, no build step), a big "73%" headline, "up from 41% in month 1" caption, and a "147 briefs over 30 days, 107 human-confirmed" subtitle. Auto-refreshes every 30s via vanilla `fetch` + `setInterval`. A `?demo=true` query param swaps the data source to the canned 30-day curve so the 3-minute live demo lands cleanly without 6 months of real history. Specifically:
+
+1. **`src/causal_oncall/dashboard.py`** — narrow public surface: `demo_dashboard_payload()`, `dashboard_payload_from(tracer)`, `render_dashboard_page()`, plus the `DashboardPayload` view-model dataclass. The route handlers in `app.py` reduce to one-liners that delegate to these functions. Implementation details (`_from_accuracy` adapter, `_DEMO_TREND` 30-value constant, `_DASHBOARD_HTML` path) live behind underscores. 28 stmts, 100% line + 100% branch.
+
+2. **`src/causal_oncall/static/dashboard.html`** — single self-contained HTML file (~150 lines). Vanilla JS sparkline writer (SVG `<polyline>` + gradient `<polygon>` fill area + final dot marker, drawn against a 600×120 viewBox). No frameworks; no CDNs; works behind a corporate proxy. Title "Causal On-Call: Self-Improvement"; dark theme matching the trace UI from W2-S2 for visual consistency. Excluded from the coverage gate (data, not logic) — shipped as setuptools package data via `static/*.html` glob in `pyproject.toml`.
+
+3. **`app.py` wiring** — three additions to a `pragma: no cover` glue file:
+   - `_Wiring` dataclass gained a `tracer: PhoenixTracer` field so the dashboard route can read accuracy data without reaching into the orchestrator's internals.
+   - Production `_build_production_wiring()` already constructed `tracer = PhoenixTracer(_phoenix_config_from_env())` from W3-S4; now passed through into the `_Wiring`.
+   - Dev `_build_dev_wiring()` adds a real `PhoenixTracer` (with the stdout-fallback recorder — no collector required) named `dev_tracer` so the dashboard route works under `CAUSAL_ONCALL_DEV_MODE=1`. The orchestrator still uses `FakePhoenixTracer` to stay deterministic in the dev curl smoke; the dashboard tracer is a separate instance reading the same JSONL outcome store (will be empty on dev/cold start, which is exactly why `?demo=true` exists).
+   - `GET /dashboard` → `HTMLResponse(render_dashboard_page())`
+   - `GET /dashboard/data?demo=<bool>` → `JSONResponse(demo_dashboard_payload().to_dict())` when `demo=True`, else `JSONResponse(dashboard_payload_from(wiring.tracer).to_dict())`.
+
+4. **Tests (14 new):** 11 unit tests in `tests/unit/test_dashboard.py` exercising the demo curve shape + monotonicity + headline counts + JSON-dict contract, the real-tracer adapter (cold-start zeros + with-seeded-outcomes), the `_from_accuracy` empty-trend defensive path, and the HTML page sanity checks (title, sparkline SVG, `setInterval`, `?demo=true` handling). 3 integration tests in `tests/integration/test_dashboard.py` standing the FastAPI app under `TestClient` in dev-mode wiring with a tmp_path JSONL outcome store: `GET /dashboard` returns 200 + HTML, `GET /dashboard/data?demo=true` returns the canned curve, `GET /dashboard/data` returns the empty real-tracer view.
+
+5. **`pyproject.toml` package-data** — added `"static/*.html"` to the `[tool.setuptools.package-data] "causal_oncall"` glob so wheel builds include the dashboard HTML alongside the code. Coverage gate config unchanged (still 100/100; `app.py` still omitted; `dashboard.py` fully gated).
+
+**Decisions made (no PLAN deviations; two documented architectural picks):**
+
+- **HTML as a separate file under `static/`, not an inline f-string.** PLAN W3-S5's "What to do if blocked" lists inline-string as the fallback; the file path is the preferred form. Wins: editable in any HTML-aware editor with syntax highlighting; no Python f-string `{{`/`}}` escaping noise; setuptools package-data ships it alongside the wheel for Cloud Run. Loss: one extra file in the repo (~150 lines). Worth it.
+
+- **Dev wiring gets a real `PhoenixTracer` alongside the `FakePhoenixTracer`.** The orchestrator stays on the fake (so the curl smoke test's hypothesis ranking stays deterministic), but the dashboard route needs `accuracy_dashboard_data()` which the fake doesn't implement. Rather than fatten `FakePhoenixTracer` with dashboard internals, I gave the dashboard its own real tracer instance (stdout recorder + empty JSONL store; works without a collector). The live-demo path always uses `?demo=true` anyway, so the real-tracer dev wiring never gets read in practice — it's there to make the no-`demo` path 200 instead of 500.
+
+- **`DashboardPayload` derived `starting_accuracy` + `trend_length` server-side.** The page COULD compute these client-side from the trend array, but keeping the math in Python means: (a) one source of truth for "month 1" semantics, (b) the JSON contract is self-describing, and (c) test coverage stays in pytest where it belongs instead of bleeding into manual browser smoke. Defensive zero-trend path tested.
+
+**Test count + coverage:** **268 passing** (was 254; +14 net = 11 unit + 3 integration), 6 skipped (3 contract live-only + 3 e2e deferred). **100% line + 100% branch** across all 25 critical-path modules (**1142 lines** / 200 branches, up from 1114 / 200). `dashboard.py` alone: 28 stmts / 0 branches, 100/100. The 30-day demo trend constant + JSON shape are pinned to the wow-moment narration (147 / 107 / 73% / 41%).
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest -q                                # 268 passing, 100/100
+.venv/Scripts/python.exe -m pytest tests/unit/test_dashboard.py -v   # 11 dashboard unit
+.venv/Scripts/python.exe -m pytest tests/integration/test_dashboard.py -v   # 3 dashboard integration
+.venv/Scripts/python.exe -m ruff check src tests                     # clean
+.venv/Scripts/python.exe -m black --check src tests                  # clean
+```
+
+**Live smoke (manual, not in CI):**
+```
+$ CAUSAL_ONCALL_DEV_MODE=1 .venv/Scripts/python.exe -m uvicorn causal_oncall.app:app --port 8080
+$ # Browser: http://127.0.0.1:8080/dashboard?demo=true
+$ # Expected: 73% headline, 41% caption, rising green sparkline, 147/107 subtitle.
+```
+
+**Demo path impact:** wow moment #4 (beat 2:30–3:00 — "Dashboard tab: rolling accuracy curve climbing 41% → 73% over 6 months") now lands. Open `http://<host>/dashboard?demo=true` in a browser tab during the demo; the 41% → 73% climb renders inside ~100ms (single fetch + SVG paint). DEMO-SCRIPT.md final wording deferred to W4-S2; the data binding + visual are locked.
+
+**Postmortem flags:**
+- **No client-side error UI.** If `/dashboard/data` returns a non-2xx, the JS swallows the error and keeps the last good render. That's the right call for an auto-refreshing page (no flash of error chrome on a transient blip), but means a misconfigured production deploy renders zeros indefinitely with no signal. Cloud Run logs will catch it; the page is intentionally dumb.
+- **The page reads `/dashboard/data` without authentication.** Same posture as `/trace/<problem_id>` from W2-S2 — internal-tools level. If the hosted Cloud Run URL goes public-facing, a downstream slice can add Cloud IAP at the load balancer. Out of W3-S5 scope.
+- **Dev-mode `PhoenixTracer` shares the JSONL store path with the orchestrator's `FakePhoenixTracer`.** They write to different stores (the fake is in-memory; the real one points at `PHOENIX_OUTCOME_STORE_PATH`), so there's no collision, but the dashboard tracer's data is always empty under dev-mode unless someone manually seeds the JSONL file. By design — `?demo=true` is the live-demo path.
+- **`static/dashboard.html` is excluded from `# pragma: no cover` because it's not Python.** Coverage tool only sees `.py` files. The HTML content is integration-tested for key strings (title, SVG, setInterval, `?demo=true` literal); a future visual-regression test could screenshot the page with Playwright if W4-S2 demo recording needs the safety net.
+- **No `<noscript>` fallback.** If JavaScript is disabled the page is empty under the card chrome. Acceptable for a demo running on the builder's own browser; documented here as known.
+
+

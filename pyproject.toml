@@ -78,7 +78,7 @@ Issues = "https://github.com/leerenjie/causal-oncall/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"causal_oncall" = ["py.typed"]
+"causal_oncall" = ["py.typed", "static/*.html"]
 
 # ----------------------------------------------------------------------
 # Pytest — drives the 4-layer test pyramid + coverage gate.
