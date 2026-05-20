@@ -42,7 +42,7 @@ def _cosine(a: Iterable[float], b: Iterable[float]) -> float:
 
 
 def _matches_filter(doc: dict, filter_doc: dict) -> bool:
-    """Subset of Mongo filter language: equality + ``$exists`` + ``$ne``."""
+    """Subset of Mongo filter language: equality + ``$exists`` + ``$ne`` + ``$gte``."""
     for key, expected in filter_doc.items():
         actual = doc.get(key)
         if isinstance(expected, dict):
@@ -53,6 +53,9 @@ def _matches_filter(doc: dict, filter_doc: dict) -> bool:
                         return False
                 elif op == "$ne":
                     if actual == op_arg:
+                        return False
+                elif op == "$gte":
+                    if actual is None or actual < op_arg:
                         return False
                 else:  # pragma: no cover  # only the operators MemoryStore uses are supported
                     raise NotImplementedError(f"FakeMongo operator {op!r} not supported")
@@ -114,6 +117,30 @@ class FakeMongoCollection:
             if filter_doc is None or _matches_filter(doc, filter_doc):
                 return doc
         return None
+
+    def find(
+        self,
+        filter_doc: dict | None = None,
+        *,
+        sort: list[tuple[str, int]] | None = None,
+    ) -> list[dict]:
+        """Return all documents matching ``filter_doc`` with optional sort.
+
+        Supports the same filter sub-language as :meth:`find_one` plus
+        ``$gte`` for the W3-S3 ``list_resolved_since`` query. ``sort`` is
+        a list of ``(field, direction)`` tuples where direction is 1 for
+        ascending and -1 for descending.
+        """
+        matches = [
+            doc for doc in self._docs if filter_doc is None or _matches_filter(doc, filter_doc)
+        ]
+        if sort:
+            for field, direction in reversed(sort):
+                matches.sort(
+                    key=lambda d, f=field: (d.get(f) is None, d.get(f)),
+                    reverse=(direction < 0),
+                )
+        return matches
 
     def count_documents(self, filter_doc: dict) -> int:
         return sum(1 for d in self._docs if _matches_filter(d, filter_doc))

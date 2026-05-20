@@ -516,3 +516,68 @@ cd causal-oncall
 - `_brief_from_memory` reads `match.record.brief.ranked_hypotheses[0].next_action` as the recommendation when present, falling back to `match.record.confirmed_fix` otherwise. The `_PriorBrief` shim from W3-S1 always returns empty `ranked_hypotheses` (no hypothesis-tree re-hydration from persisted markdown), so today the live Atlas path always takes the `confirmed_fix` branch. This matches the W3-S1 postmortem note ("No `_PriorBrief` re-hydration of structured hypotheses"); fine for the hackathon, post-hackathon TODO if we ever want a richer short-circuit brief.
 
 
+---
+
+### W3-S3 — Curator agent (weekly pattern synthesis from Mongo) — 2026-05-20
+
+**Commit:** (this commit — `feat(W3-S3): Curator agent for weekly pattern synthesis`)
+
+**Built:** Replaced the W1-shipped Curator stub with the production-ready deep module the strategist spec required. The public surface is locked to exactly two new types (`Curator` + `CuratorReport`); everything else moved into hidden internals. The Curator is standalone (no Slack, no Phoenix, no Dynatrace, no app.py touchpoint), runs from cron via `python -m causal_oncall.curator --since 7d`, and is also importable as `Curator.synthesize(since: datetime) -> CuratorReport` for in-process tests. Specifically:
+
+1. **`Curator.synthesize(since)` — the one public method.** Calls `memory.list_resolved_since(since)` for the batch read, clusters records by `(service, failure_mode)` using a deterministic service-derivation helper (`affected_entity_ids[0]` with title-token fallback) + `confirmed_root_cause_key`, drops clusters below `min_cluster_size`, asks Gemini 2.5 Pro to synthesize a pattern for each surviving cluster, and writes one YAML per pattern into the configured few-shot directory. Returns `CuratorReport(run_at, clusters_examined, patterns_extracted, files_written, total_cost_usd)` — the same shape that becomes the Slack weekly digest payload.
+
+2. **Idempotency via SHA-8 filename keying.** Each pattern's filename is `{service_slug}_{failure_mode_slug}_{sha8(sorted_incident_ids)}.yaml`. Re-running the Curator over the same Mongo state produces files with the same names; the existence check (`active_keys` ∪ filesystem) skips them before the Gemini call. Two-leg dedup: `memory.list_active_few_shot_keys()` for cron isolation (when the curator and the read corpus live in different working dirs) plus `target.exists()` for the same-working-dir case. Verified by `test_synthesize_is_idempotent_on_repeat_runs` + `test_synthesize_skips_when_target_file_exists_even_without_active_key`.
+
+3. **Two new public methods on MemoryStore.** Per the spec: `list_resolved_since(since: datetime) -> list[IncidentRecord]` (Atlas `find({resolved_at: {$gte: since}, confirmed_root_cause_key: {$exists, $ne: null}}, sort=[(resolved_at, 1)])` translated through the existing `_doc_to_record` rehydrator), and `list_active_few_shot_keys() -> set[str]` (filesystem scan of the configured few-shot directory, returning YAML filename stems). Both methods translate any underlying exception to `MemoryStoreUnavailable` so callers never see raw pymongo errors. **No `promote_few_shot` method added** — that's a Curator-owned write (YAML emission), per strict spec interpretation.
+
+4. **`MemoryStoreConfig.few_shot_directory: Path | None = None`.** New config field with a default that resolves to the in-package `_few_shot/` directory next to the specialists. The Curator's `_resolve_few_shot_dir()` defers to MemoryStore's `_few_shot_dir()` when the CuratorConfig override is None, so both sides of the read/write contract point at the same place.
+
+5. **`CuratorConfig`** — kept and extended (`lookback_days=7`, `min_cluster_size=2`, `max_examples_per_pattern=5`, `gemini_model_id="gemini-2.5-pro"`, `few_shot_directory: Path | None = None`). Backwards-compatible with the existing `app.py` wiring (`Curator(memory=memory, config=CuratorConfig())` still constructs fine; `Curator(memory=memory)` also defaults cleanly).
+
+6. **CLI entry: `python -m causal_oncall.curator --since 7d`.** Argparse with two flags — `--since {Nd|Nh|Nm}` (defaults to `CuratorConfig.lookback_days`) and `--few-shot-dir PATH` (overrides CuratorConfig.few_shot_directory). Stdout prints a one-line summary + the list of written files. The `main()` function accepts `memory=` + `gemini_client=` kwargs as test seams so the CLI flow runs end-to-end without Vertex AI creds (verified by `test_main_runs_end_to_end_against_real_memory_store`).
+
+7. **`FakeGeminiClient` in `tests/fakes/gemini.py`.** Records every prompt, returns canned dicts from a queue (with `default_response` fallback), exposes deterministic `(input_tokens, output_tokens)` so the CuratorReport cost number is deterministic. Wired into the conftest fake-export list + the new `fake_gemini` fixture.
+
+8. **`FakeMongoCollection.find()` + `$gte` filter.** Previous `FakeMongoCollection` only emulated `aggregate` / `find_one` / `update_one` / `count_documents` / `insert_one`. Added `find()` with optional `sort` (list of `(field, direction)` tuples), plus `$gte` in `_matches_filter`, so the W3-S3 read path exercises the production code's actual Mongo query at the unit layer.
+
+9. **`FakeMemoryStore` extensions.** Added `_resolved_records` + `_active_few_shot_keys` constructor kwargs, `list_resolved_since(since)` + `list_active_few_shot_keys()` methods, and `stub_resolved` / `stub_active_few_shot_keys` test helpers. Existing tests that monkeypatched the old stub Curator's seams continue to work; the W3-S3 tests use the public surface.
+
+10. **Seed JSON bump to schema_version 2.** Per the W3-S2 postmortem flag #3: `tests/fixtures/memory_seeds/seed_10_resolved.json` moved from a bare list to `{"schema_version": 2, "records": [...]}`, with a new `"service"` field on each record so the Curator's clustering picks it up cleanly. `scripts/seed_memory.py` + `tests/conftest.py::memory_seed_payload` updated to handle both shapes (legacy bare-list + new envelope). The W3-S2-skipped `test_demo_path_memory_short_circuit_when_prior_resolved_exists` continues to pass (it does `json.loads` without structural assertions).
+
+**Decisions made (all in-scope adaptations, no PLAN deviations):**
+
+- **`Curator` constructor stays compatible with app.py.** The existing app.py constructs `Curator(memory=memory, config=CuratorConfig())`. The new constructor accepts the same call (with optional `gemini_client=` kwarg added). app.py is untouched per the W3-S3 hard constraint ("Don't touch app.py — curator runs as a separate CLI").
+- **`CuratorConfig` field set shifted slightly** (`lookback_days` default 30 → 7 to match the W3-S3 spec's `--since 7d`; added `gemini_model_id`, `few_shot_directory`; renamed `max_few_shot_examples_per_specialist` to `max_examples_per_pattern` since the Curator now writes per-pattern files, not per-specialist files). The old field name was W1-stub artifact and was never read by app.py.
+- **`CurationReport` renamed to `CuratorReport`** to match the W3-S3 spec's locked public type names. The old name was W1-stub artifact and was not consumed anywhere outside the Curator's own tests.
+- **Gemini model defaults to `gemini-2.5-pro`** (NOT `gemini-3.1-pro-preview`) — same SPIKE-DAY0 carry-forward #1 the Synthesizer follows. Pro tier per PLAN W3-S3 ("**Gemini 3.1 Pro** (one batch, quality matters)"); the 3.1-preview model is gated for our trial project, so 2.5-pro is the demo target. Operator override via standard env vars.
+- **Service derivation uses the first non-empty `affected_entity_ids` token, falling back to the title's first word.** This is the deterministic seam the Curator needs to cluster; the seed JSON's new `"service"` field is used by `scripts/seed_memory.py` to populate `affected_entity_ids`, so both paths align.
+- **`list_active_few_shot_keys()` reads the filesystem (not Mongo).** The few-shot directory IS the system-of-record for "what we've learned" — it's what ships with the next deploy. Putting the dedup query on MemoryStore (rather than Curator) preserves MemoryStore's identity as the central memory broker while keeping the Curator as a pure transform.
+- **MemoryStore public surface grew from 3 to 5 methods** (`match`, `record`, `update_resolution`, `list_resolved_since`, `list_active_few_shot_keys`). Per the W3-S3 spec this was an explicit promotion of the W3-S1 private seams (`_list_resolved_since`, `_already_promoted_keys`). The deep-module rule is still honored: each new method has a single narrow job; everything underneath stays hidden.
+
+**Test count + coverage:** **229 passing** (was 192; +37 net = +29 new curator tests, +5 new memory-store tests, +3 trimmed/replaced from the W1-stub curator tests), 3 skipped (live-only contract). **100% line + 100% branch** across all 23 critical-path modules (**1041 lines / 186 branches**, up from 933 / 170). Curator alone: 132 stmts / 26 branches, 100% / 100%. MemoryStore: 107 stmts / 14 branches, 100% / 100%.
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m pytest tests/unit/test_curator.py -v
+.venv/Scripts/python.exe -m pytest tests/unit/test_memory_store.py -v
+.venv/Scripts/python.exe -m ruff check src tests scripts
+.venv/Scripts/python.exe -m black --check src tests scripts
+# CLI smoke (does not hit live Vertex):
+.venv/Scripts/python.exe -m causal_oncall.curator --help
+```
+
+**Curator real-world cost estimate (per-run, for 10 seed incidents):** With Gemini 2.5 Pro at $2/M input + $12/M output, and ~1200 input + ~400 output tokens per cluster prompt (the prompt embeds only structured cluster facts, not full briefs), each cluster costs ~$0.0072. The 10 seed incidents cluster into ~7 distinct `(service, failure_mode)` patterns; min_cluster_size=2 means ~2-3 patterns clear the floor (db_pool_exhaustion on payment-service, deploy_regression on checkout-service). **Per-run cost on the 10-seed corpus: ~$0.015-$0.025.** First full week's run on the 30-day window with real volume would be 5-10× higher; well under the $0.50 cap.
+
+**Demo path impact:** the Curator runs offline (cron-style), not in the webhook request path, so the live demo flow is unchanged. Demo narration adds a single beat: "and this is what runs every Sunday night — the Curator synthesizes new few-shot patterns from the past week's resolved incidents." Will surface in `DEMO-SCRIPT.md` (W4-S2). The wow-moment-#4 (self-improvement dashboard, W3-S5) reads the Curator's output indirectly via the Phoenix accuracy curve.
+
+**Postmortem flags:**
+- The Curator's clustering is `(service, failure_mode)` only — it does not yet do embedding-based similarity for cases where two incidents have the same root cause but slightly different signatures. For the hackathon scope this is fine (failure_mode is the canonical key for the few-shot bank); a post-hackathon enhancement could layer cosine clustering on top of the same Mongo embeddings the MemoryStore already persists.
+- The few-shot YAMLs are written but **not yet consumed by any specialist's system prompt.** That's the wiring the spec mentions: "specialists load these at startup." Adding the loader to each specialist's `__init__` (one helper in `Specialist` base reading from `MemoryStore.list_active_few_shot_keys` + the corresponding YAML payloads) is the natural W3-postmortem follow-up. No specialist prompt-bias today means the Curator's output is informational only for the demo; the wow-moment-#4 dashboard reads accuracy from Phoenix, not from few-shot loadedness.
+- `Curator._filename_stem` embeds the SHA-8 of sorted incident ids. If the curator runs on a strict superset of a prior cluster (e.g. 3 new incidents added to the existing 2), the SHA changes and a NEW file is written alongside the OLD one — the OLD file is stale but still present. Garbage-collection of stale few-shot patterns is a post-hackathon hygiene item; tracking as a future ROADMAP entry.
+- The `_LazyVertexGeminiClient` is `pragma: no cover` because it requires Vertex AI creds + a live network. Contract-suite coverage for the real client is the same gate as the Synthesizer's `_default_llm_call`: not exercised in CI; verified by manual smoke when the operator runs the CLI against a real GCP project.
+- The fallback path on `Curator._resolve_few_shot_dir()` (when CuratorConfig.few_shot_directory is None) goes through MemoryStore's `_few_shot_dir()` private method. Calling a private method across module boundaries is a small deep-module-health flag; the alternative (promote `_few_shot_dir` to public) would grow MemoryStore's surface to 6 methods just to satisfy one internal-fallback path. Kept private with an explanatory comment; revisit if a third caller appears.
+- The `FakeMemoryStore` in conftest gained a `_few_shot_dir` private method to mirror the real MemoryStore for the same fallback. Marked `# pragma: no cover` because tests always pass `few_shot_directory` on CuratorConfig (the fallback is exercised via the real MemoryStore path through `test_synthesize_falls_back_to_memory_store_few_shot_dir`).
+
+

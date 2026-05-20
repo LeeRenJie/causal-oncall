@@ -64,7 +64,10 @@ def _seed() -> int:  # pragma: no cover  # human-driven script
         / "memory_seeds"
         / "seed_10_resolved.json"
     )
-    seeds = json.loads(seed_path.read_text(encoding="utf-8"))
+    raw = json.loads(seed_path.read_text(encoding="utf-8"))
+    # W3-S3: seed JSON is now envelope-shaped {schema_version, records};
+    # accept the legacy bare-list form too so external loaders aren't broken.
+    seeds = raw["records"] if isinstance(raw, dict) else raw
 
     cfg = MemoryStoreConfig(
         mongodb_uri=mongodb_uri,

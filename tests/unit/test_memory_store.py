@@ -436,3 +436,106 @@ def test_memory_store_uses_default_embedder_attribute_when_none_passed():
     # _embed bound method points at the lazy default; don't invoke it
     # (would require Vertex AI creds), just assert identity.
     assert store._embed.__func__ is MemoryStore._default_embed  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------- #
+# W3-S3: list_resolved_since + list_active_few_shot_keys
+# ---------------------------------------------------------------------- #
+
+
+def test_list_resolved_since_returns_only_resolved_records_in_window():
+    """W3-S3: Curator-facing batch read."""
+    store, coll, _ = _store()
+    base = datetime(2026, 5, 1, tzinfo=UTC)
+    # Two resolved inside the window, sorted out-of-order to verify the sort.
+    coll.insert_one(
+        _seed_doc(embedding=[0.1] * 8, incident_id="late", opened_at=base)
+        | {"resolved_at": datetime(2026, 5, 5, tzinfo=UTC)}
+    )
+    coll.insert_one(
+        _seed_doc(embedding=[0.1] * 8, incident_id="early", opened_at=base)
+        | {"resolved_at": datetime(2026, 5, 2, tzinfo=UTC)}
+    )
+    # One open (must be filtered).
+    open_doc = _seed_doc(embedding=[0.1] * 8, incident_id="open")
+    open_doc["confirmed_root_cause_key"] = None
+    open_doc["resolved_at"] = datetime(2026, 5, 3, tzinfo=UTC)
+    coll.insert_one(open_doc)
+    # One outside the window (resolved before ``since``).
+    coll.insert_one(
+        _seed_doc(embedding=[0.1] * 8, incident_id="stale", opened_at=base)
+        | {"resolved_at": datetime(2026, 4, 1, tzinfo=UTC)}
+    )
+
+    records = store.list_resolved_since(datetime(2026, 4, 15, tzinfo=UTC))
+    assert [r.incident_id for r in records] == ["early", "late"]
+
+
+def test_list_resolved_since_returns_empty_when_no_records_match():
+    store, _, _ = _store()
+    assert store.list_resolved_since(datetime(2026, 5, 1, tzinfo=UTC)) == []
+
+
+def test_list_resolved_since_translates_atlas_exception():
+    class _BoomCollection:
+        def find(self, *_args, **_kwargs):
+            raise RuntimeError("Atlas: connection reset")
+
+    store, _, _ = _store(collection=_BoomCollection())  # type: ignore[arg-type]
+    with pytest.raises(MemoryStoreUnavailable, match="resolved_at"):
+        store.list_resolved_since(datetime(2026, 5, 1, tzinfo=UTC))
+
+
+def test_list_active_few_shot_keys_reads_directory_stems(tmp_path):
+    """Returns the stem of every ``.yaml`` file in the configured directory."""
+    (tmp_path / "payment_db_pool_aaaa1111.yaml").write_text("a:\n", encoding="utf-8")
+    (tmp_path / "checkout_deploy_bbbb2222.yaml").write_text("b:\n", encoding="utf-8")
+    # Files with the wrong extension are ignored.
+    (tmp_path / "README.md").write_text("# nope\n", encoding="utf-8")
+    # Subdirectories are ignored.
+    (tmp_path / "subdir").mkdir()
+
+    cfg = MemoryStoreConfig(
+        mongodb_uri="mongodb://x",
+        database="db",
+        collection="incidents",
+        vector_index_name="incident_vec_idx",
+        embedding_model_id="fake",
+        embedding_dimensions=8,
+        few_shot_directory=tmp_path,
+    )
+    store = MemoryStore(cfg)
+    assert store.list_active_few_shot_keys() == {
+        "payment_db_pool_aaaa1111",
+        "checkout_deploy_bbbb2222",
+    }
+
+
+def test_list_active_few_shot_keys_returns_empty_when_directory_missing(tmp_path):
+    cfg = MemoryStoreConfig(
+        mongodb_uri="mongodb://x",
+        database="db",
+        collection="incidents",
+        vector_index_name="incident_vec_idx",
+        embedding_model_id="fake",
+        embedding_dimensions=8,
+        few_shot_directory=tmp_path / "does-not-exist",
+    )
+    store = MemoryStore(cfg)
+    assert store.list_active_few_shot_keys() == set()
+
+
+def test_few_shot_dir_defaults_to_in_package_directory():
+    """When config doesn't override, point at the in-package _few_shot/ dir."""
+    cfg = MemoryStoreConfig(
+        mongodb_uri="mongodb://x",
+        database="db",
+        collection="incidents",
+        vector_index_name="incident_vec_idx",
+        embedding_model_id="fake",
+        embedding_dimensions=8,
+    )
+    store = MemoryStore(cfg)
+    resolved = store._few_shot_dir()
+    assert resolved.name == "_few_shot"
+    assert resolved.parent.name == "causal_oncall"

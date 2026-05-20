@@ -23,6 +23,7 @@ import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from causal_oncall.domain.brief import Brief
@@ -49,6 +50,12 @@ class MemoryStoreConfig:
     embedding_dimensions: int
     match_threshold: float = 0.85
     vector_search_num_candidates: int = 100
+    # W3-S3: directory containing per-pattern few-shot YAML files written
+    # by the Curator. Read by ``list_active_few_shot_keys`` for dedup.
+    # Defaults to the in-package ``_few_shot/`` directory next to the
+    # specialists; production wiring points it elsewhere if it ships
+    # patterns from a mounted volume.
+    few_shot_directory: Path | None = None
 
 
 # Type alias: the embedder callable takes the signature text and returns
@@ -76,7 +83,7 @@ def _hash_text(text: str) -> str:
 class MemoryStore:
     """Operational + vector store for resolved incidents.
 
-    The store has exactly three jobs (locked, deep-module surface):
+    The store has exactly five jobs (locked, deep-module surface):
       * :meth:`match` — find the prior incident that looks most like a new
         signature; return ``None`` below the threshold.
       * :meth:`record` — upsert an investigation, deduped on the
@@ -84,10 +91,14 @@ class MemoryStore:
         same brief on the same incident don't blow up the corpus.
       * :meth:`update_resolution` — fold the on-call's confirmed verdict
         back into the row once Slack feedback arrives.
+      * :meth:`list_resolved_since` (W3-S3) — batch read of resolved
+        incidents in a lookback window; consumed by the Curator agent.
+      * :meth:`list_active_few_shot_keys` (W3-S3) — set of pattern keys
+        already promoted to the few-shot bank, for Curator dedup.
 
     Everything else (pymongo client, Vertex AI embedding model, vector
-    index management, schema validation, dedup, ``$vectorSearch`` shape)
-    is plumbing hidden behind these three.
+    index management, schema validation, dedup, ``$vectorSearch`` shape,
+    few-shot directory scan) is plumbing hidden behind these five.
     """
 
     def __init__(
@@ -254,9 +265,64 @@ class MemoryStore:
         except Exception as exc:
             raise MemoryStoreUnavailable(f"Atlas update failed: {exc}") from exc
 
+    def list_resolved_since(self, since: datetime) -> list[IncidentRecord]:
+        """Return every resolved incident with ``resolved_at >= since``.
+
+        Sorted oldest-first so the Curator's deterministic clustering
+        produces stable few-shot file ordering across runs. Open incidents
+        (``confirmed_root_cause_key`` is null) are excluded server-side so
+        the Curator only operates on human-verified outcomes.
+
+        ``since`` may be naive or timezone-aware; naive values are
+        interpreted as UTC for the Mongo query (Atlas stores BSON datetimes
+        as UTC). The behavior matches what the Curator's CLI surface
+        (``--since 7d``) produces when it computes the lookback window.
+        """
+        coll = self._ensure_collection()
+        try:
+            cursor = coll.find(
+                {
+                    "resolved_at": {"$gte": since},
+                    "confirmed_root_cause_key": {"$exists": True, "$ne": None},
+                },
+                sort=[("resolved_at", 1)],
+            )
+            docs = list(cursor)
+        except Exception as exc:
+            raise MemoryStoreUnavailable(
+                f"Atlas find(resolved_at >= {since!r}) failed: {exc}"
+            ) from exc
+        return [self._doc_to_record(doc) for doc in docs]
+
+    def list_active_few_shot_keys(self) -> set[str]:
+        """Return the set of pattern keys currently present in the few-shot bank.
+
+        Reads the on-disk few-shot directory (``few_shot_directory`` on
+        config) and returns each YAML file's stem. The Curator consults
+        this set to skip re-synthesizing clusters whose pattern file
+        already exists; if the directory is absent the set is empty.
+
+        Filesystem read lives on MemoryStore (not Curator) because the
+        directory is the system-of-record for "what we've learned" — the
+        Curator only ever writes into it.
+        """
+        directory = self._few_shot_dir()
+        if not directory.exists():
+            return set()
+        try:
+            return {p.stem for p in directory.iterdir() if p.is_file() and p.suffix == ".yaml"}
+        except OSError as exc:  # pragma: no cover  # filesystem error is local-dev only
+            raise MemoryStoreUnavailable(f"Few-shot directory scan failed: {exc}") from exc
+
     # ------------------------------------------------------------------ #
     # Internals — everything below is hidden plumbing.
     # ------------------------------------------------------------------ #
+
+    def _few_shot_dir(self) -> Path:
+        if self._config.few_shot_directory is not None:
+            return self._config.few_shot_directory
+        # Default points at the in-package few-shot bank.
+        return Path(__file__).resolve().parent / "_few_shot"
 
     def _ensure_collection(self):
         if self._collection is None:  # pragma: no cover  # exercised by contract test only

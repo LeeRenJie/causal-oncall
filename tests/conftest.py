@@ -22,7 +22,7 @@ from causal_oncall.domain.incident_record import IncidentRecord, Match
 from causal_oncall.domain.problem_signature import ProblemSignature
 from causal_oncall.dynatrace_client import DQLPlan, Entity, EventId, ProblemContext, QueryResult
 from causal_oncall.memory_store import MemoryStore, MemoryStoreConfig
-from tests.fakes import FakeEmbedder, FakeMongoClient, FakeMongoCollection
+from tests.fakes import FakeEmbedder, FakeGeminiClient, FakeMongoClient, FakeMongoCollection
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -189,11 +189,21 @@ class FakeDynatraceClient:
 class FakeMemoryStore:
     """In-process stand-in for MemoryStore."""
 
-    def __init__(self, *, match_to_return: Match | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        match_to_return: Match | None = None,
+        resolved_records: list[IncidentRecord] | None = None,
+        active_few_shot_keys: set[str] | None = None,
+    ) -> None:
         self.match_to_return = match_to_return
         self.recorded: list[IncidentRecord] = []
         self.resolutions: list[tuple[str, str, str]] = []
         self.fail_on_match: Exception | None = None
+        # W3-S3: surfaces consumed by the Curator agent.
+        self._resolved_records: list[IncidentRecord] = list(resolved_records or [])
+        self._active_few_shot_keys: set[str] = set(active_few_shot_keys or set())
+        self.list_resolved_since_calls: list = []
 
     def match(self, signature: ProblemSignature, *, threshold: float | None = None) -> Match | None:
         if self.fail_on_match is not None:
@@ -212,6 +222,29 @@ class FakeMemoryStore:
         self, incident_id: str, *, confirmed_root_cause_key: str, confirmed_fix: str
     ) -> None:
         self.resolutions.append((incident_id, confirmed_root_cause_key, confirmed_fix))
+
+    def list_resolved_since(self, since) -> list[IncidentRecord]:
+        self.list_resolved_since_calls.append(since)
+        return list(self._resolved_records)
+
+    def list_active_few_shot_keys(self) -> set[str]:
+        return set(self._active_few_shot_keys)
+
+    # Test-helper to populate the resolved corpus after construction.
+    def stub_resolved(self, records: list[IncidentRecord]) -> None:
+        self._resolved_records = list(records)
+
+    def stub_active_few_shot_keys(self, keys: set[str]) -> None:
+        self._active_few_shot_keys = set(keys)
+
+    # ``_few_shot_dir`` is read by the Curator when no override is set in
+    # config. Tests that want isolated YAML output pass ``few_shot_directory``
+    # on CuratorConfig directly; this fallback is here for symmetry with
+    # the real MemoryStore surface.
+    def _few_shot_dir(self):  # pragma: no cover  # exercised only via CuratorConfig override
+        from pathlib import Path
+
+        return Path(".") / "_unused_fake_few_shot"
 
 
 class FakeSynthesizer:
@@ -298,9 +331,12 @@ def incident_payloads() -> dict[str, dict[str, Any]]:
 
 @pytest.fixture
 def memory_seed_payload() -> list[dict[str, Any]]:
-    return json.loads(
+    raw = json.loads(
         (FIXTURES / "memory_seeds" / "seed_10_resolved.json").read_text(encoding="utf-8")
     )
+    # W3-S3: seed JSON moved to {schema_version, records} envelope; accept
+    # the legacy bare-list shape too for older callers.
+    return raw["records"] if isinstance(raw, dict) else raw
 
 
 # ---------- MemoryStore fixtures (W3-S1) ---------- #
@@ -310,6 +346,7 @@ def make_memory_store_config(
     *,
     match_threshold: float = 0.85,
     dim: int = 8,
+    few_shot_directory=None,
 ) -> MemoryStoreConfig:
     """Build a MemoryStoreConfig pointed at fake-in-memory infrastructure.
 
@@ -325,6 +362,7 @@ def make_memory_store_config(
         embedding_model_id="fake-embed",
         embedding_dimensions=dim,
         match_threshold=match_threshold,
+        few_shot_directory=few_shot_directory,
     )
 
 
@@ -336,6 +374,11 @@ def fake_mongo_collection() -> FakeMongoCollection:
 @pytest.fixture
 def fake_embedder() -> FakeEmbedder:
     return FakeEmbedder(dim=8)
+
+
+@pytest.fixture
+def fake_gemini() -> FakeGeminiClient:
+    return FakeGeminiClient()
 
 
 @pytest.fixture
@@ -356,6 +399,7 @@ __all__ = [
     "DynatraceUnavailable",
     "FakeDynatraceClient",
     "FakeEmbedder",
+    "FakeGeminiClient",
     "FakeMemoryStore",
     "FakeMongoClient",
     "FakeMongoCollection",
