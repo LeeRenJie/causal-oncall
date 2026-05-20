@@ -99,3 +99,107 @@ def test_post_brief_renders_memory_short_circuit_badge(monkeypatch):
     notifier.post_brief(brief, feedback_channel="C123")
     rendered = repr(fake.posted[0].get("blocks", []))
     assert "seen this incident shape" in rendered
+
+
+def test_post_brief_header_says_memory_hit_when_from_memory(monkeypatch):
+    from datetime import UTC, datetime
+
+    from causal_oncall.domain.brief import Brief, Hypothesis
+
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+    hyp = Hypothesis(
+        key="db_pool_exhaustion",
+        title="DB pool exhausted",
+        rank=1,
+        score=0.91,
+        supporting_evidence=(),
+        refuting_evidence=(),
+        next_action="Roll back",
+    )
+    brief = Brief(
+        problem_id="P-M",
+        generated_at=datetime(2026, 5, 17, 9, 31, tzinfo=UTC),
+        ranked_hypotheses=(hyp,),
+        top_recommendation="Roll back",
+        memory_short_circuit=True,
+        from_memory=True,
+        pattern_match_score=0.92,
+    )
+    notifier.post_brief(brief, feedback_channel="C123")
+    rendered = repr(fake.posted[0].get("blocks", []))
+    assert "memory hit" in rendered
+    assert "92%" in rendered  # similarity rendered
+
+
+def test_post_brief_renders_supporting_evidence_under_each_hypothesis(monkeypatch):
+    from tests.conftest import make_brief as _mb
+    from tests.conftest import make_evidence, make_hypothesis
+
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+    evs = tuple(
+        make_evidence(
+            specialist=s,
+            summary=f"finding from {s}",
+            confidence=0.6 + 0.05 * i,
+        )
+        for i, s in enumerate(["triage", "topology", "deploy_correlation"])
+    )
+    hyp = make_hypothesis(supporting=evs, next_action="Roll back v412.")
+    brief = _mb(hypotheses=(hyp,))
+    notifier.post_brief(brief, feedback_channel="C123")
+    rendered = repr(fake.posted[0].get("blocks", []))
+    assert "finding from triage" in rendered
+    assert "finding from topology" in rendered
+    assert "finding from deploy_correlation" in rendered
+
+
+def test_post_brief_truncates_supporting_evidence_above_4(monkeypatch):
+    from tests.conftest import make_brief as _mb
+    from tests.conftest import make_evidence, make_hypothesis
+
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+    evs = tuple(make_evidence(summary=f"finding #{i}") for i in range(7))
+    hyp = make_hypothesis(supporting=evs)
+    brief = _mb(hypotheses=(hyp,))
+    notifier.post_brief(brief, feedback_channel="C123")
+    rendered = repr(fake.posted[0].get("blocks", []))
+    assert "3 more findings" in rendered
+
+
+def test_post_brief_renders_per_hypothesis_next_action_when_different(monkeypatch):
+    from tests.conftest import make_brief as _mb
+    from tests.conftest import make_hypothesis
+
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+    hyp1 = make_hypothesis(rank=1, next_action="Top recommendation.")
+    hyp2 = make_hypothesis(
+        rank=2,
+        key="cve_exposure",
+        title="CVE exposure",
+        score=0.55,
+        next_action="Different per-hypothesis next step.",
+    )
+    brief = _mb(hypotheses=(hyp1, hyp2))
+    notifier.post_brief(brief, feedback_channel="C123")
+    rendered = repr(fake.posted[0].get("blocks", []))
+    assert "Different per-hypothesis next step" in rendered
+
+
+def test_post_brief_footer_includes_live_trace_link_when_base_url_set(monkeypatch):
+    monkeypatch.setenv("CAUSAL_ONCALL_BASE_URL", "https://example.run.app")
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+    brief = make_brief(problem_id="P-FOOT")
+    notifier.post_brief(brief, feedback_channel="C123")
+    rendered = repr(fake.posted[0].get("blocks", []))
+    assert "https://example.run.app/trace/P-FOOT" in rendered
+    assert "View live trace" in rendered

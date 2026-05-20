@@ -88,60 +88,140 @@ class SlackNotifier:
 
     @staticmethod
     def _render_block_kit(brief: Brief) -> list[dict]:
+        import os as _os
+
+        base_url = _os.environ.get("CAUSAL_ONCALL_BASE_URL", "").rstrip("/")
+
+        header_text = f"Causal On-Call brief: {brief.problem_id}"
+        if brief.from_memory:
+            header_text = f"Causal On-Call (memory hit): {brief.problem_id}"
+
         blocks: list[dict] = [
             {
                 "type": "header",
-                "text": {
-                    "type": "plain_text",
-                    "text": f"Causal On-Call: {brief.problem_id}",
-                },
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Next action:* {brief.top_recommendation}",
-                },
-            },
+                "text": {"type": "plain_text", "text": header_text, "emoji": True},
+            }
         ]
+
         if brief.memory_short_circuit:
+            score_pct = (
+                f" (similarity {brief.pattern_match_score:.0%})"
+                if brief.pattern_match_score is not None
+                else ""
+            )
             blocks.append(
                 {
                     "type": "context",
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": ":bookmark: We have seen this incident shape before.",
+                            "text": (
+                                f":bookmark: We have seen this incident shape "
+                                f"before{score_pct}. Showing the historical fix."
+                            ),
                         }
                     ],
                 }
             )
+
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Next action:* {brief.top_recommendation}",
+                },
+            }
+        )
+        blocks.append({"type": "divider"})
+
         for hyp in brief.ranked_hypotheses:
             blocks.append(
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*{hyp.rank}. {hyp.title}* — score {hyp.score:.2f}",
+                        "text": (
+                            f"*#{hyp.rank} · {hyp.title}*  "
+                            f"`score {hyp.score:.2f}`"
+                        ),
                     },
                 }
             )
+
+            if hyp.supporting_evidence:
+                ev_lines = []
+                for ev in hyp.supporting_evidence[:4]:
+                    ev_lines.append(
+                        f"• `{ev.specialist}` "
+                        f"(conf {ev.confidence:.0%}) — {ev.summary}"
+                    )
+                if len(hyp.supporting_evidence) > 4:
+                    ev_lines.append(
+                        f"• _…and {len(hyp.supporting_evidence) - 4} more findings_"
+                    )
+                blocks.append(
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": "\n".join(ev_lines)},
+                    }
+                )
+
+            if hyp.next_action and hyp.next_action != brief.top_recommendation:
+                blocks.append(
+                    {
+                        "type": "context",
+                        "elements": [
+                            {"type": "mrkdwn", "text": f":arrow_right: {hyp.next_action}"}
+                        ],
+                    }
+                )
+
             blocks.append(
                 {
                     "type": "actions",
                     "elements": [
                         {
                             "type": "button",
+                            "style": "primary",
+                            "text": {
+                                "type": "plain_text",
+                                "text": f"Confirm #{hyp.rank}",
+                                "emoji": True,
+                            },
+                            "value": hyp.key,
+                            "action_id": f"confirm_{hyp.key}",
+                        },
+                        {
+                            "type": "button",
                             "text": {
                                 "type": "plain_text",
                                 "text": f"Reject #{hyp.rank}",
+                                "emoji": True,
                             },
                             "value": hyp.key,
                             "action_id": f"reject_{hyp.key}",
-                        }
+                        },
                     ],
                 }
             )
+            blocks.append({"type": "divider"})
+
+        footer_parts = [
+            f"_Generated {brief.generated_at.strftime('%Y-%m-%d %H:%M UTC')}_",
+            f"_schema v{Brief.SCHEMA_VERSION}_",
+        ]
+        if base_url:
+            footer_parts.append(
+                f"<{base_url}/trace/{brief.problem_id}|View live trace>"
+            )
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "  ·  ".join(footer_parts)}],
+            }
+        )
+
         return blocks
 
     def _ensure_slack(self):  # pragma: no cover  # exercised by contract test in W2
