@@ -32,7 +32,10 @@ from causal_oncall.dynatrace_client import (  # pragma: no cover
 )
 from causal_oncall.memory_store import MemoryStore, MemoryStoreConfig  # pragma: no cover
 from causal_oncall.orchestrator import Orchestrator, OrchestratorConfig  # pragma: no cover
-from causal_oncall.phoenix_tracer import PhoenixTracer, PhoenixTracerConfig  # pragma: no cover
+from causal_oncall.phoenix_tracer import PhoenixTracer  # pragma: no cover
+from causal_oncall.phoenix_tracer import (
+    config_from_env as _phoenix_config_from_env,  # pragma: no cover
+)
 from causal_oncall.slack_notifier import SlackNotifier, SlackNotifierConfig  # pragma: no cover
 from causal_oncall.specialists import (  # pragma: no cover
     AnomalyWindowSpecialist,
@@ -63,13 +66,11 @@ class _Wiring:
 
 
 def _build_production_wiring() -> _Wiring:  # pragma: no cover  # env-driven boot
-    tracer = PhoenixTracer(
-        PhoenixTracerConfig(
-            collector_endpoint=os.environ["PHOENIX_COLLECTOR_ENDPOINT"],
-            project_name=os.environ.get("PHOENIX_PROJECT_NAME", "causal-oncall"),
-            api_key=os.environ.get("PHOENIX_API_KEY") or None,
-        )
-    )
+    # W3-S4: ``config_from_env`` resolves all PHOENIX_* vars including
+    # the outcome-store path. Real Arize Phoenix SDK kicks in when
+    # ``PHOENIX_COLLECTOR_ENDPOINT`` is set; otherwise the stdout
+    # fallback recorder runs (preserves W1 local-dev behavior).
+    tracer = PhoenixTracer(_phoenix_config_from_env())
 
     dynatrace = DynatraceClient(
         DynatraceClientConfig(

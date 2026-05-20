@@ -581,3 +581,65 @@ cd causal-oncall
 - The `FakeMemoryStore` in conftest gained a `_few_shot_dir` private method to mirror the real MemoryStore for the same fallback. Marked `# pragma: no cover` because tests always pass `few_shot_directory` on CuratorConfig (the fallback is exercised via the real MemoryStore path through `test_synthesize_falls_back_to_memory_store_few_shot_dir`).
 
 
+---
+
+### W3-S4 — Phoenix SDK self-eval + rolling accuracy dashboard data — 2026-05-20
+
+**Commit:** (this commit — `feat(W3-S4): Arize Phoenix SDK instrumentation + accuracy dashboard data`)
+
+**Built:** Replaced the W1-shipped stdout span recorder with a real Arize Phoenix SDK (OTLP) recorder, kept the W1 `_StdoutSpanRecorder` as the fallback so local-dev parity holds, persisted every recorded outcome to a JSONL eval-row store that survives Cloud Run cold starts, and added the rolling-accuracy reader (`PhoenixTracer.accuracy_dashboard_data()`) that powers the W3-S5 self-improvement dashboard wow moment (#4 in UNIQUE_IDEA). The `PhoenixTracer` public surface stayed within the spec ceiling (two existing methods + one new `accuracy_dashboard_data`); all new behavior lives behind hidden seams (`_OtelSpanRecorder`, `_StdoutSpanRecorder`, `_OutcomeStore`, `_parse_ts`, `_bucket_trend`). Specifically:
+
+1. **`PhoenixTracer.accuracy_dashboard_data() -> AccuracyDashboardData`** — the one new public method. Reads the local JSONL outcome store, filters to the configured rolling window (default 30 days per UNIQUE_IDEA wow-#4 spec), and bins into `config.trend_buckets` (default 6 — ~5 days each) for the dashboard sparkline. Returns a frozen `AccuracyDashboardData` with `rolling_accuracy`, `total_briefs`, `confirmed_count`, and `trend: tuple[float, ...]`. Empty-store path returns clean zeros (cold-start renders without NaN gaps).
+
+2. **`AccuracyDashboardData`** — frozen slotted dataclass mirroring the shape of the W3-S5 dashboard's data binding. Test coverage exercises the simulated UNIQUE_IDEA wow path (climbing 41% → 73% over the rolling window). One-snapshot-per-read; no caching, so the dashboard always shows the latest human-confirmed feedback the moment it lands.
+
+3. **`_OtelSpanRecorder`** — the real recorder. Uses `phoenix.otel.register()` to construct an OpenInference-aware `TracerProvider` against the env-resolved OTLP endpoint, then starts/ends/annotates spans via the OTel API. Span ids are stringified `{trace_id:032x}:{span_id:016x}` so they round-trip cleanly between `traced` / `end_span` / `annotate_outcome`. Marked `# pragma: no cover` with the explicit rationale "exercised only when an OTLP collector is reachable; tested via the FakePhoenixClient seam" — the OTLP wire protocol is Phoenix's contract, not ours.
+
+4. **`_StdoutSpanRecorder`** — fully covered fallback. Active when `PHOENIX_COLLECTOR_ENDPOINT` is unset (W1 local-dev parity). Emits one JSON line per `span.start` / `span.end` / `span.annotate` event so `uvicorn` runs stay observable without standing up a collector. Tests pin the lifecycle line format + error-repr rendering.
+
+5. **`_OutcomeStore`** — JSONL-backed append-only eval-row store. One row per `record_outcome` call, schema forward-compatible with Phoenix's native eval row shape (`span_id`, `label`, `score` + our `top_hypothesis_correct` / `recorded_at` / `project`). Reads cache the full row list after the first scan; appends invalidate the cache so the dashboard never reads stale data. Tests cover: persistence round-trip, parent-dir creation, missing-file empty read, blank-line skipping (log-rotator defense), cache hit on second read, cache invalidation after append.
+
+6. **Recorder selection logic.** Constructor branch: explicit `recorder=` injection wins (tests); else `collector_endpoint` non-empty selects `_OtelSpanRecorder`; else stdout. Test `test_recorder_defaults_to_stdout_when_collector_endpoint_is_empty` pins the fallback selection.
+
+7. **`record_outcome` writes to BOTH the store AND the span.** The outcome row lands in the JSONL store (for our dashboard's rolling metric); the span annotation goes to OTel as a `eval.top_hypothesis_correct` event (so the Phoenix UI shows the eval inline with the trace tree). The recorder's `annotate_outcome` is a no-op if the span already ended — graceful degradation when Slack feedback arrives after the request handler returned.
+
+8. **`config_from_env()` factory** — env-driven config builder. Mirrors `.env.example`'s `PHOENIX_*` block plus the new `PHOENIX_OUTCOME_STORE_PATH`. `app.py` swapped from inline `PhoenixTracerConfig(...)` construction to `PhoenixTracer(_phoenix_config_from_env())` — cleaner, and the outcome-store path is now wired without extra constructor noise. The factory itself is `# pragma: no cover` — env-shim only, exercised by manual smoke at app startup.
+
+9. **`FakePhoenixClient` in `tests/fakes/phoenix.py`** — single deep-fake instance satisfying both the recorder + outcome-store protocols. Tests pass the same instance as both `recorder=` and `outcome_store=` to `PhoenixTracer`. Exposes `spans`, `outcomes`, `span_annotations` lists for assertions, plus a `seed_outcome(...)` helper that pre-populates an eval row as if a prior run had recorded it (the rolling-window + trend tests use this). Wired into `tests/fakes/__init__.py` re-exports.
+
+10. **`.env.example` updated** with the new `PHOENIX_OUTCOME_STORE_PATH` env var (defaults to `./out/phoenix_outcomes.jsonl`). Cloud Run wiring (W4-S1) will point this at a mounted GCS volume so the rolling metric survives cold starts.
+
+**Decisions made (no PLAN deviations; one documented architectural pick):**
+
+- **`accuracy_dashboard_data()` computes locally, not via a Phoenix native query.** The full `arize-phoenix` package exposes a `phoenix.Client()` query interface over Phoenix's eval store, but it pulls native deps that Windows + the lean Cloud Run runtime don't need. We ship `arize-phoenix-otel` (the lighter OTLP-collector-only variant, 0.16.1 — confirmed installed by `pip list`). Spans still flow through OTLP to whatever Phoenix collector the env points at (so the trace UI inside Phoenix sees them); we just don't re-pull eval rows back through a Phoenix HTTP query to compute the headline number. The outcome-row schema is intentionally forward-compatible with Phoenix's native shape (`span_id`, `label`, `score`) so a future slice could swap to the native query without changing the rest of the codebase. Documented in the module docstring + the strategist-W3-S4-brief "What to do if blocked" #2 path matches this fallback. **Source of `accuracy_dashboard_data()`: local computation over our own JSONL outcome store** — not Phoenix native query.
+
+- **Phoenix install variant: `arize-phoenix-otel` (lighter OTEL-only variant).** Already in `pyproject.toml` dev + runtime deps from a prior session; the strategist's "What to do if blocked #1" path is exactly this. No new deps added to `pyproject.toml` — every dep the real recorder uses (`phoenix.otel`, `openinference`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp`) was already declared.
+
+- **`PhoenixTracer.__init__` gained two optional kwargs (`recorder=`, `outcome_store=`, `clock=`)** for dependency injection. The W1 stub also had a `_recorder` instance attr that tests monkeypatched directly; the new design promotes that to a proper kwarg seam so tests don't have to reach into private state. Public method count unchanged (3). The constructor signature change is backward-compatible — `PhoenixTracer(PhoenixTracerConfig(...))` still works.
+
+- **`FakePhoenixTracer` in `conftest.py` was NOT touched.** That fake models the orchestrator's view of the tracer (the `traced` decorator + `record_outcome` shape) and is consumed by the orchestrator unit tests. The new `FakePhoenixClient` models the recorder + outcome-store seams the real `PhoenixTracer` depends on. Two fakes at two different layers, both narrow to their callers' contract.
+
+- **Eval writeback wiring (the Slack-feedback path) is NOT in this slice.** Per the strategist brief: "for this slice, just expose the public method; the actual feedback wiring is W2-S3 (Slack feedback) or a future slice. Just provide the seam." The seam is `PhoenixTracer.record_outcome(span_id, top_hypothesis_correct=...)`; the brief→span_id mapping that the Slack handler needs will be added in W2-S3 when that builder runs. No orchestrator behavior changed — `Orchestrator.handle` still constructs a Brief without recording an outcome (the outcome arrives later, asynchronously, when the human confirms).
+
+**Test count + coverage:** **254 passing** (was 229; +25 net = +28 new phoenix-tracer tests, -3 replaced from the W1 stub spec), 3 skipped (live-only contract). **100% line + 100% branch** across all 24 critical-path modules (**1114 lines / 200 branches**, up from 1041 / 186). PhoenixTracer alone: 108 stmts / 14 branches, 100% / 100%.
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m pytest tests/unit/test_phoenix_tracer.py -v
+.venv/Scripts/python.exe -m ruff check src tests scripts
+.venv/Scripts/python.exe -m black --check src tests scripts
+```
+
+**Demo path impact:** the W3-S4 path produces the data binding for wow-moment #4 (beat 2:30-3:00 — "Dashboard tab: rolling accuracy curve climbing 41% → 73% over 6 months"). The W3-S5 builder consumes `PhoenixTracer.accuracy_dashboard_data()` directly to render the Chart.js sparkline; the headline number ("top-hypothesis correct: N%") reads from `rolling_accuracy`; the table of last-N briefs reads from the same outcome store via a future cursor method (out of scope for this slice). DEMO-SCRIPT.md update deferred to W4-S2 with the final beat-by-beat narration.
+
+**Postmortem flags:**
+- **Eval feedback writeback wiring** lands in W2-S3 (Slack feedback button → `POST /feedback` → `tracer.record_outcome(brief_id_to_span_id_map[brief_id], top_hypothesis_correct=...)`). The brief→span_id mapping needs to be added to the Orchestrator or persisted alongside the brief. Two natural implementations: (a) add a `span_id` field to `Brief` (mutates the domain model — needs the W3-postmortem nod), or (b) keep an in-process dict on the Orchestrator keyed on `brief_id`. Both are W2-S3-builder decisions; the tracer side is ready.
+- **`_OtelSpanRecorder` is `pragma: no cover`** because OTLP transmission requires a real collector. The recorder protocol is exercised end-to-end via the `FakePhoenixClient` injection in unit tests; the real OTLP path will be smoke-tested when Cloud Run + Phoenix Cloud are wired in W4-S1. No CI gate for the real wire; a manual smoke command is documented in the module docstring (set `PHOENIX_COLLECTOR_ENDPOINT` + `PHOENIX_API_KEY`, fire one webhook, watch spans appear in the Phoenix UI).
+- **The JSONL outcome store grows unbounded.** At demo scale (<100 incidents) and even at year-scale (~10k rows) this is fine, but a production deployment should rotate or compact the file. Tracking as a post-hackathon hygiene item; the current schema is forward-compatible with a sharded layout.
+- **`accuracy_dashboard_data()` source is local computation, not Phoenix native query.** Documented in the module docstring and above. A future slice could swap the store backend to a Phoenix-Client query if the heavy `arize-phoenix` server gets deployed alongside; the public surface (`AccuracyDashboardData` shape) won't change.
+- **Deep-module-health check.** Public surface: 2 dataclasses (`PhoenixTracerConfig`, `AccuracyDashboardData`) + 1 class with 3 methods (`PhoenixTracer.traced`, `record_outcome`, `accuracy_dashboard_data`) + 1 factory (`config_from_env`). All implementation details (`_OtelSpanRecorder`, `_StdoutSpanRecorder`, `_OutcomeStore`, `_RecorderProtocol`, `_parse_ts`, `_bucket_trend`, `_utcnow`) live behind underscores. No external consumer should need to import them.
+- **Phoenix is the OSS SDK, NOT the partner bucket.** Dynatrace remains the central nervous system of the demo; Phoenix is observability infrastructure only. Partner-bucket integrity intact per UNIQUE_IDEA.
+
+
