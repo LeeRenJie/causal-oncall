@@ -121,11 +121,17 @@ class _DemoDynatraceClient:  # pragma: no cover
 class _DemoMemoryStore:  # pragma: no cover
     """In-process stand-in for MemoryStore — demo-only.
 
-    Always returns no match by default so the orchestrator always runs
-    the full specialist dispatch (which is what the live demo wants —
-    the "memory short-circuit" wow moment is demonstrated by the
-    dashboard's ?demo=true canned curve, not by this fake).
+    Returns a canned Match for the db_pool_exhaustion fixture so wow #3
+    (memory short-circuit + "seen this 14x" badge) fires on a live curl
+    against the demo URL. All other problem_ids fall through and run the
+    full specialist dispatch (wow #1 + #2).
     """
+
+    # Problem id from tests/fixtures/incidents/db_pool_exhaustion.json — the
+    # second canonical demo fixture. First curl hits payment_latency_spike.json
+    # (cold path, wow #1+#2); second curl hits db_pool_exhaustion.json
+    # (memory hit, wow #3).
+    _SHORT_CIRCUIT_PROBLEM_ID = "-9223372036854775806_v2"
 
     def __init__(self) -> None:
         self.match_to_return: Match | None = None
@@ -133,7 +139,11 @@ class _DemoMemoryStore:  # pragma: no cover
         self.resolutions: list[tuple[str, str, str]] = []
 
     def match(self, signature: ProblemSignature, *, threshold: float | None = None) -> Match | None:
-        return self.match_to_return
+        if self.match_to_return is not None:
+            return self.match_to_return
+        if signature.problem_id == self._SHORT_CIRCUIT_PROBLEM_ID:
+            return _build_canned_db_pool_match(signature)
+        return None
 
     def record(self, incident_record: IncidentRecord) -> None:
         self.recorded.append(incident_record)
@@ -169,6 +179,90 @@ class _DemoPhoenixTracer:  # pragma: no cover
 
     def record_outcome(self, span_id: str, *, top_hypothesis_correct: bool) -> None:
         self.outcomes.append((span_id, top_hypothesis_correct))
+
+
+def _build_canned_db_pool_match(signature: ProblemSignature) -> Match:  # pragma: no cover
+    """Synthesize a Match for the db_pool_exhaustion fixture.
+
+    Wires wow #3 (memory short-circuit + "seen this 14x" badge) onto a
+    live curl. The prior_occurrences=14 is the canonical demo number from
+    UNIQUE_IDEA.md; the confirmed_fix is what an on-call engineer would
+    actually write after triaging the real incident.
+    """
+    from datetime import UTC, datetime
+
+    prior_signature = ProblemSignature(
+        problem_id="-9223372036854775806_v2_prior_2026Q1",
+        title="Response time degradation on payment-service (recurring)",
+        severity="PERFORMANCE",
+        affected_entity_ids=("SERVICE-payment",),
+        affected_entity_types=("SERVICE",),
+        opened_at=datetime(2026, 2, 14, 3, 12, tzinfo=UTC),
+        fingerprint="db-pool-exhaustion-recurring",
+    )
+    pool_ev = Evidence(
+        specialist="anomaly_window",
+        kind="metric_deviation",
+        summary="max_connections held at ceiling for 6 minutes during the incident.",
+        stance="supports",
+        hypothesis_key="db_pool_exhaustion",
+        confidence=0.93,
+        dynatrace_links=(),
+        raw_payload={"metric": "dt.process.db.connections.max", "deviation": 6.0},
+    )
+    deploy_ev = Evidence(
+        specialist="deploy_correlation",
+        kind="deploy_window_match",
+        summary="Deploy v411 reduced the connection pool size from 100 to 50.",
+        stance="supports",
+        hypothesis_key="db_pool_exhaustion",
+        confidence=0.89,
+        dynatrace_links=(),
+        raw_payload={"deploy": "v411", "diff": "pool_size: 100 -> 50"},
+    )
+    prior_brief = Brief(
+        problem_id=prior_signature.problem_id,
+        generated_at=datetime(2026, 2, 14, 3, 14, tzinfo=UTC),
+        ranked_hypotheses=(
+            Hypothesis(
+                key="db_pool_exhaustion",
+                title="Database connection pool exhausted after deploy v411",
+                rank=1,
+                score=0.91,
+                supporting_evidence=(pool_ev, deploy_ev),
+                refuting_evidence=(),
+                next_action=(
+                    "Roll back deploy v411 on payment-service and restore "
+                    "the connection pool to its prior size of 100."
+                ),
+            ),
+        ),
+        top_recommendation=(
+            "Roll back deploy v411 on payment-service and restore the "
+            "connection pool to its prior size of 100."
+        ),
+        unresolved_questions=(),
+        from_memory=False,
+        pattern_match_score=None,
+    )
+    prior_record = IncidentRecord(
+        incident_id="incident-2026Q1-db-pool-001",
+        signature=prior_signature,
+        brief=prior_brief,
+        opened_at=prior_signature.opened_at,
+        resolved_at=datetime(2026, 2, 14, 3, 28, tzinfo=UTC),
+        confirmed_root_cause_key="db_pool_exhaustion",
+        confirmed_fix=(
+            "Rolled back deploy v411 and pinned the connection pool size at "
+            "100 in payment-service's helm values. Mean time to recover: 14m."
+        ),
+        embedding=tuple([0.0] * 768),
+    )
+    return Match(
+        record=prior_record,
+        similarity=0.92,
+        prior_occurrences=14,
+    )
 
 
 def build_demo_dynatrace_client() -> _DemoDynatraceClient:  # pragma: no cover
