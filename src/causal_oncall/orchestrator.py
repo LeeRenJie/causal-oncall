@@ -307,8 +307,8 @@ class Orchestrator:
                     title=f"{top.title} (seen {match.prior_occurrences}x before)",
                     rank=1,
                     score=match.similarity,
-                    supporting_evidence=(),
-                    refuting_evidence=(),
+                    supporting_evidence=top.supporting_evidence,
+                    refuting_evidence=top.refuting_evidence,
                     next_action=recommendation,
                 ),
             )
