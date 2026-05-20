@@ -61,6 +61,13 @@ dev = [
     "pre-commit>=4.0.0",
     "respx>=0.21.0",
     "mongomock>=4.3.0",
+
+    # MCP SDK — drives `scripts/record_cassettes.py` to capture live
+    # Dynatrace MCP responses into the contract suite's cassettes.
+    # Replay path (default test runs) does NOT need this dep; it only
+    # surfaces when a builder re-records cassettes in a session with
+    # live Dynatrace OAuth.
+    "mcp>=1.27.0",
 ]
 
 [project.urls]

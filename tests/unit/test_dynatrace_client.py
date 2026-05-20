@@ -174,6 +174,38 @@ def test_execute_dql_returns_empty_result_when_mcp_records_are_empty(monkeypatch
     assert result.execution_ms == 0
 
 
+def test_execute_dql_handles_prose_only_envelope_as_empty_result(monkeypatch):
+    """Live Dynatrace MCP (v1.8.5) returns a markdown prose envelope when a DQL
+    query scans zero records (W2-S0 finding from the empty trial tenant).
+
+    The client must collapse that envelope to an empty QueryResult without
+    raising — specialists tolerate empty evidence, but they choke on a
+    parser exception.
+    """
+    mcp = _ScriptedMCP([{"raw": "Scanned 0 records; rendered by MCP UI."}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    result = client.execute_dql(DQLPlan(query="fetch logs | limit 1"))
+    assert result.columns == ()
+    assert result.rows == ()
+    assert result.execution_ms == 0
+
+
+def test_execute_dql_passes_dqlStatement_as_the_arg_key_to_mcp(monkeypatch):
+    """Pin the MCP arg-shape contract: execute_dql must pass ``dqlStatement``.
+
+    Regression guard against the W2-S0 drift where prior code passed
+    ``{"query": ..., "parameters": ...}`` and the live MCP rejected
+    every call. If the upstream MCP renames the arg again, this test
+    fails loudly before reaching the cassette suite.
+    """
+    mcp = _ScriptedMCP([{"records": []}])
+    client = DynatraceClient(_cfg())
+    monkeypatch.setattr(client, "_mcp", mcp, raising=False)
+    client.execute_dql(DQLPlan(query="fetch logs | limit 1"))
+    assert mcp.calls == [("execute_dql", {"dqlStatement": "fetch logs | limit 1"})]
+
+
 def test_get_topology_neighbors_drops_neighbors_exceeding_depth(monkeypatch):
     mcp = _ScriptedMCP(
         [

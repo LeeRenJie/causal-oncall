@@ -2,18 +2,10 @@
     {
         "tool": "execute_dql",
         "args": {
-            "query": "fetch logs | limit 1",
-            "parameters": {}
+            "dqlStatement": "fetch logs | limit 1"
         },
         "response": {
-            "records": [
-                {
-                    "timestamp": "2026-05-20T03:14:15.926Z",
-                    "loglevel": "INFO",
-                    "content": "synthetic cassette row - replace via scripts/record_cassettes.py for live"
-                }
-            ],
-            "executionMs": 47
+            "raw": "\ud83d\udcca **DQL Query Results**\n\n- **Scanned Records:** 0\n- **Scanned Bytes:** 0.00 GB (Session total: 0.00 GB / 10 GB budget, 0.0% used)\n    \ud83d\udca1 **No Data consumed:** This query did not consume any data.\n\n\ud83d\udccb **Query Results**: (0 records) \u2014 rendered by the MCP App UI below.\n\n> \u2139\ufe0f The MCP App is rendering the results interactively. Do NOT generate Mermaid diagrams, ASCII charts, or markdown tables from this data."
         }
     }
 ]

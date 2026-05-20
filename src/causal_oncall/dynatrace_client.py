@@ -148,11 +148,19 @@ class DynatraceClient:
         retries on transient 429/503 with exponential backoff, validates
         the response shape, and maps unrecoverable errors to
         ``DynatraceUnavailable`` / ``RateLimited``.
+
+        The live Dynatrace MCP server (v1.8.5) expects ``dqlStatement``
+        as the parameter name, and returns either a structured records
+        envelope OR a prose markdown summary wrapped in ``{"raw": ...}``
+        when the query is empty / the renderer suppressed the row data
+        (W2-S0 finding from the empty trial tenant). Both paths normalize
+        to a typed ``QueryResult``; the prose path yields an empty result.
         """
         self._check_allowed("execute_dql")
-        response = self._call_tool_with_retry(
-            "execute_dql", {"query": plan.query, "parameters": plan.parameters}
-        )
+        response = self._call_tool_with_retry("execute_dql", {"dqlStatement": plan.query})
+        # Prose-only envelopes (no parseable records) collapse to empty.
+        if "raw" in response and "records" not in response:
+            return QueryResult(columns=(), rows=(), execution_ms=0)
         records = tuple(response.get("records", ()))
         if not records:
             return QueryResult(columns=(), rows=(), execution_ms=0)

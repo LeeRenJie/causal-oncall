@@ -213,4 +213,97 @@ CAUSAL_ONCALL_DEV_MODE=1 .venv/Scripts/python.exe -m uvicorn causal_oncall.app:a
 - The SSE stream emits one event per specialist lifecycle moment, but the orchestrator currently runs **synchronously** in the webhook request handler — meaning the curl call returns AFTER the brief is fully rendered, and the trace stream is best viewed by opening the trace URL *before* triggering the webhook. For the demo this is fine; for production we'd push the orchestrator work to a background task. Logging as a W3 backlog item.
 - The HTML template lives inline in Python — when it grows past ~150 lines, promote to a Jinja template or a standalone `.html` file under `src/causal_oncall/static/`. Tracking as a deep-module-health postmortem item.
 
+---
+
+### W2-S0 (re-record) — live MCP cassettes captured + arg-shape drift fixed — 2026-05-20
+
+**Commit:** (this commit — `feat(W2-S0): record live MCP cassettes and verify contract suite`)
+
+**Built:** Drove the real Dynatrace MCP server (npx `@dynatrace-oss/dynatrace-mcp-server@latest` v1.8.5) end-to-end with browser-OAuth fallback against the spike trial tenant (`https://jea41717.apps.dynatrace.com`). Captured cassettes for two contract scenarios, fixed the only minimal parser update the live shape demanded, and pinned the arg-shape contract with a new unit test. Specifically:
+
+1. **`scripts/_probe_mcp_shape.py`** (new) — one-shot enumerator that drives `session.list_tools()` and dumps each tool's name + input-schema to stdout. Confirms the spike's "20 tools" claim and reveals each tool's current arg names. Reusable by future builders when MCP versions bump.
+2. **DynatraceClient.execute_dql arg-shape drift fix.** Live MCP rejects the old `{"query": ..., "parameters": ...}` envelope; correct shape is `{"dqlStatement": ...}`. One-line change. Added two new unit tests:
+   - `test_execute_dql_handles_prose_only_envelope_as_empty_result` — pins the new branch that collapses MCP prose-markdown envelopes (`{"raw": "0 records ..."}`) to an empty `QueryResult` rather than raising.
+   - `test_execute_dql_passes_dqlStatement_as_the_arg_key_to_mcp` — pins the arg-shape contract so future drifts fail loudly at the unit layer before reaching the cassette layer.
+3. **`scripts/record_cassettes.py` re-wired** to the live tool surface: `execute_dql` uses `dqlStatement`, and the per-problem context capture uses `list_problems` + 2 DQLs (drift-isolated under `_live_get_problem_context.json` — see DEVIATION below).
+4. **Live cassette `test_execute_dql_against_real_mcp_returns_a_valid_query_result.json`** now contains the real MCP prose envelope from the empty trial tenant (`0 scanned records / 10 GB budget`). Cassette replays without creds.
+5. **Live cassette `_live_get_problem_context.json`** captures the new (`list_problems` + 2 DQLs) tool sequence from the live MCP — held alongside the active synthetic cassette pending the follow-up tool-rewire slice.
+6. **`mcp>=1.27.0` pinned** in `pyproject.toml` dev deps. Required by `scripts/record_cassettes.py`; not required by the cassette replay path.
+
+## DEVIATION at W2-S0 (resolved with isolated workaround)
+
+**What was planned:** PLAN W1-S1 done-means + W2-S0 strategist directive: "record live VCR cassette for Dynatrace MCP `list_problems` + `get_problem_details` calls; commit to lock contract suite shape."
+
+**What I discovered:** The current Dynatrace MCP server (v1.8.5) does **NOT** expose a `get_problem_details` tool. The 20-tool surface is:
+
+```
+get_environment_info, list_vulnerabilities, list_problems, find_entity_by_name,
+send_slack_message, verify_dql, execute_dql, generate_dql_from_natural_language,
+explain_dql_in_natural_language, chat_with_davis_copilot,
+create_workflow_for_notification, make_workflow_public, get_kubernetes_events,
+reset_grail_budget, send_email, send_event, list_exceptions, list_davis_analyzers,
+execute_davis_analyzer, create_dynatrace_notebook
+```
+
+Three tools `DynatraceClient` references (`get_problem_details`, `get_topology_neighbors`, `post_problem_comment`) **do not exist** in this version. `execute_dql` exists but takes `dqlStatement`, not `query` + `parameters`. Response envelopes are markdown prose (not JSON envelopes with `records`) for empty trial tenants.
+
+**What I shipped (the minimal in-scope fix):**
+- The drift fix for `execute_dql` is in (one line + parser branch).
+- The drift for `get_problem_details` / `get_topology_neighbors` / `post_problem_comment` is **NOT** fixed — those rewires cascade into specialists + synthesizer + orchestrator (multi-slice scope explicitly out of W2-S0 per directive: "Don't touch any other slice").
+- For the `get_problem_context` contract test: the synthetic cassette from W2-S0's first pass is preserved as the test fixture so the parser shape contract still runs; the live capture is parked under `_live_get_problem_context.json` documenting what the rewire target shape looks like.
+
+**What I propose (for strategist):**
+A new slice **W2-S5: Dynatrace MCP v1.8.5 tool-name realignment** to:
+- Refactor `DynatraceClient.get_problem_context` to use `list_problems(additionalFilter=...)` instead of the absent `get_problem_details`.
+- Replace `get_topology_neighbors` with topology-fetched-via-DQL (`fetch dt.entity.service | filter ...`) — the topology graph is queryable via Grail.
+- Replace `post_problem_comment` with `send_slack_message` for the demo write-back path (Dynatrace v1.8.5 doesn't accept agent-authored comments via MCP — the write-back surface is Slack); OR `send_event` for "annotate problem with custom event" semantics.
+- Re-record the cassette into the canonical test name, retire `_live_get_problem_context.json`.
+- Estimated 4–6 hours work, touches `dynatrace_client.py`, all 5 specialists (their tool-allowlists), unit tests, and `_METHOD_TO_TOOL` map.
+
+**Test count + coverage:** 141 passing (+2 new unit tests for the prose envelope + arg-shape contract), 3 skipped (live-only smoke tests). 100% line + 100% branch coverage across all critical-path modules (836 lines / 144 branches).
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest tests/unit tests/integration tests/contract -q
+.venv/Scripts/python.exe -m pytest tests/contract -v --no-cov   # 2 passed, 3 skipped
+.venv/Scripts/python.exe -m ruff check src tests scripts        # clean
+.venv/Scripts/python.exe -m black --check src tests scripts     # clean
+```
+
+**Manual re-record path (5-min runbook for human builder with browser):**
+```
+cd causal-oncall
+cp ../spike/.env .env
+.venv/Scripts/python.exe -m pip install "mcp>=1.27.0"
+.venv/Scripts/python.exe scripts/record_cassettes.py
+# browser will open for Dynatrace OAuth on first run; session cached after.
+```
+
+**Cassette files committed (3):**
+- `tests/contract/cassettes/test_execute_dql_against_real_mcp_returns_a_valid_query_result.json` — **live** (empty trial tenant; 0 records)
+- `tests/contract/cassettes/test_get_problem_context_handles_known_test_problem_id.json` — **synthetic** (pending W2-S5 client rewire; preserves parser-shape contract)
+- `tests/contract/cassettes/_live_get_problem_context.json` — **live** (parked; documents the v1.8.5 list_problems shape for the W2-S5 rewire target)
+
+**MCP shape drift summary:**
+
+| Surface | What we assumed | Live v1.8.5 reality | Action taken |
+|---|---|---|---|
+| `execute_dql` arg key | `query` + `parameters` | `dqlStatement` only | Fixed in DynatraceClient + recorder. |
+| `execute_dql` response (empty) | `{"records": []}` JSON | Markdown prose `{"raw": "..."}` | Parser collapses to empty `QueryResult`. |
+| `get_problem_details` | tool exists | tool does NOT exist | Logged; W2-S5 rewire required. |
+| `get_topology_neighbors` | tool exists | tool does NOT exist | Logged; W2-S5 rewire required. |
+| `post_problem_comment` | tool exists | tool does NOT exist | Logged; W2-S5 rewire required. |
+| `list_problems` args | `{}` | `{timeframe?, status?, additionalFilter?, maxProblemsToDisplay?}` | All optional; empty `{}` works. |
+| 20-tool inventory | per spike | confirmed 20 tools | No change. |
+
+**Costs:** ~$0. The MCP runs locally (npx subprocess). All Dynatrace API calls hit the spike trial tenant (no Grail budget consumed — empty tenant; ~0.00 GB scanned across 6 DQL probes). No Gemini calls in the contract suite path.
+
+**Time elapsed:** ~45 min wall-clock (probe → drift discovery → minimal fix → re-record → contract suite green → lint/black → commit).
+
+**Postmortem flags:**
+- Three of `DynatraceClient`'s public methods reference non-existent MCP tools. The current orchestrator + specialists will RuntimeError on any live (non-cassette) run. The integration-test path stays green because tests use `FakeDynatraceClient`. **Demo path risk:** until W2-S5 ships, the live curl smoke against a real Dynatrace tenant will error on `get_problem_details`. The CASSETTE-driven contract suite hides this from CI.
+- Dropped `parameters` field from `DQLPlan.parameters` carrier — the live MCP doesn't accept it, but the type is still present on `DQLPlan` for source-compat with W1-shipped specialists. If W2-S5 confirms no specialist actually populates `.parameters`, the field can be retired. Tracking as deep-module-health item.
+- The probe artifact `scripts/_probe_mcp_shape.py` is kept committed (not gitignored) — it's a single-shot diagnostic, ~70 lines, useful when future MCP versions bump. Excluded from coverage because it's not part of the package.
+
 

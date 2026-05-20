@@ -64,7 +64,11 @@ def _record_or_die() -> int:  # pragma: no cover  # human-driven script
 
             # 1. Record a benign DQL — feeds
             #    test_execute_dql_against_real_mcp_returns_a_valid_query_result.
-            dql_args = {"query": "fetch logs | limit 1", "parameters": {}}
+            #
+            #    Live Dynatrace MCP v1.8.5 takes ``dqlStatement`` (W2-S0 drift
+            #    finding) — NOT the older ``query`` + ``parameters`` shape the
+            #    pre-spike code assumed.
+            dql_args = {"dqlStatement": "fetch logs | limit 1"}
             dql_call = await session.call_tool("execute_dql", arguments=dql_args)
             dql_response = _extract_payload(dql_call)
             _write_cassette(
@@ -72,8 +76,15 @@ def _record_or_die() -> int:  # pragma: no cover  # human-driven script
                 [{"tool": "execute_dql", "args": dql_args, "response": dql_response}],
             )
 
-            # 2. Record a get_problem_details + two hydration DQLs — feeds
+            # 2. Record a list_problems + two hydration DQLs — feeds
             #    test_get_problem_context_handles_known_test_problem_id.
+            #
+            #    Drift: MCP v1.8.5 does NOT expose ``get_problem_details``.
+            #    The closest read is ``list_problems`` (returns prose summary
+            #    of recent problems). When the tenant has no open problems
+            #    the live MCP returns the literal string ``"No problems found"``
+            #    — captured into the cassette so replay tests degrade
+            #    deterministically (same path empty trial tenants will hit).
             problems = await session.call_tool("list_problems", arguments={})
             problems_payload = _extract_payload(problems)
             problem_id = _pick_problem_id(problems_payload)
@@ -86,19 +97,32 @@ def _record_or_die() -> int:  # pragma: no cover  # human-driven script
 
             ctx_calls = []
             for tool, args in [
-                ("get_problem_details", {"problem_id": problem_id}),
+                ("list_problems", {}),
                 (
                     "execute_dql",
-                    {"query": f"fetch entities | filter problemId == '{problem_id}'"},
+                    {
+                        "dqlStatement": (
+                            f'fetch dt.davis.problems | filter problem.id == "{problem_id}"'
+                        )
+                    },
                 ),
                 (
                     "execute_dql",
-                    {"query": f"fetch events | filter problemId == '{problem_id}'"},
+                    {"dqlStatement": (f'fetch events | filter problem.id == "{problem_id}"')},
                 ),
             ]:
                 call = await session.call_tool(tool, arguments=args)
                 ctx_calls.append({"tool": tool, "args": args, "response": _extract_payload(call)})
-            _write_cassette("test_get_problem_context_handles_known_test_problem_id", ctx_calls)
+            # Drift-isolated filename: the live cassette is parked under
+            # ``_live_get_problem_context.json`` so the active contract
+            # test (which still drives the old ``get_problem_details``
+            # tool name) continues to replay against the synthetic
+            # cassette committed under
+            # ``test_get_problem_context_handles_known_test_problem_id.json``.
+            # When the DynatraceClient gets rewired to use ``list_problems``
+            # in a follow-up slice, swap the filename here back to the
+            # canonical test name.
+            _write_cassette("_live_get_problem_context", ctx_calls)
 
             print(
                 f"\nRecorded cassettes to {CASSETTE_DIR}. "
