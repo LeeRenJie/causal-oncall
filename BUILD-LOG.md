@@ -888,3 +888,44 @@ The landing HTML includes (asserted in tests):
 - **Cold-start budget is unchanged.** The new routes add no startup cost (no module imports beyond `landing.py`, which is pure stdlib). The pre-warm script's job is unchanged.
 - **The "Confirm hypothesis" button is a no-op visual.** Per the strategist brief — feedback is out of W4-S5 scope. A future slice could wire it to `/feedback` (already a Slack-driven endpoint) for parity, but the brief explicitly says "Confirm button is a no-op visual for now".
 
+
+---
+
+### W4-S6 — 2026-05-22 (Builder phase, landing v2 redesign)
+
+**Commit:** (pending — see commit below)
+
+**Built:** Full rewrite of the W4-S5 landing page per the impeccable design brief. The page is now one scrolling surface: hero (monospace overline with pulsing live dot, 76.8px sans-serif H1, lead, single anchor CTA), three demo cards with hand-rolled inline SVG icons (snowflake-meets-clock, bookmark-with-check, branching arrow), a streaming trace panel (one line per SSE event, ts + specialist + summary, last line pulses until brief-ready), brief-as-cards (top-recommendation banner with hairline accent left border, memory-hit badge, hypothesis cards with animated confidence bars + evidence accordions + spring-tap confirm/reject buttons), a result-confirmed strip with three status pills (Slack post / Grail event / dashboard link), and a text-only sponsor footer. The companion `dashboard.html` was re-skinned to the same color tokens and pill style for consistency.
+
+**Decisions made (locked design choices):**
+- **Color strategy: Restrained, OKLCH only.** Dropped every `#hex` in landing + dashboard. Tokens are tinted toward the bg hue (250) so the palette stays a single tonal family. Only `--accent` (green 145) is saturated; `--warn` and `--danger` exist for confidence-bar branches but otherwise unused. Rationale: PRODUCT.md anti-references explicitly bar Datadog/New Relic-style brand-color washes; the SRE-at-2am scene forces tonal restraint.
+- **Motion library: motion.dev via jsdelivr ESM.** Bound to `window.__motion` so the non-module boot script can call it. A queue (`whenMotionReady`) handles the race where the boot script parses before the module import resolves — fallback for any prefers-reduced-motion user sets final-state styles directly. No JS framework introduced.
+- **Icons: hand-rolled inline SVG, currentColor stroke.** Three demo icons + six status/UI icons (pulsing dot via CSS `@keyframes pulse-ring`, send, chart, eye, check, bookmark). Zero external icon dep, zero image assets.
+- **H1 + lead phrasing per PRODUCT.md "What it is".** H1 lifts the brief's exact spec sentence; lead is the trimmed-for-hero version of the PRODUCT.md `## What it is` paragraph. No em dashes anywhere in user-facing copy — replaced with commas, colons, parens. Even the CSS comments + JS fallback strings ("n/a" instead of "—") avoid em dashes so the page never accidentally surfaces one.
+- **Demo card titles unchanged.** `Run cold investigation` / `Run memory-hit (seen 14x before)` / `Run with hypothesis rejection` are kept verbatim from v1 because (a) integration tests + demo script reference them, and (b) the brief's "wow #N" framing is preserved via the monospace `.label` line above the title.
+- **Trace stream is one-line-per-event.** v1 dumped full JSON; v2 condenses to `[HH:MM:SS] specialist → summary (conf X.XX)`. Rationale: the trace panel's purpose is to *signal liveness + agent reasoning*, not to be a debug log. The full JSON is still in the SSE stream and still inspectable via DevTools.
+- **Confidence bar is CSS-transitioned, not motion.dev animated.** The width transition is a single property; CSS `transition` is cheaper than spinning up a JS animator. Color (green/amber/red) is class-based, set at render time.
+- **Result-confirmed strip is integrated into the brief panel.** Three pills appear below the hypothesis cards once the brief renders; only the dashboard pill is a real link (the other two are status indicators since Slack workspace + Grail event are server-side artifacts). All three render as inline SVG, not emoji.
+
+**Test count + coverage:** 285 passing (unchanged), 6 skipped (unchanged), **100% line + 100% branch coverage** (unchanged). Tests updated: `tests/unit/test_landing.py` and `tests/integration/test_landing.py` to assert on the new H1 phrasing, plus new asserts that lock the impeccable hard floors (OKLCH-only palette, motion.dev loaded, no `#000`/`#fff` leak, no gradient text via `background-clip: text`, no glassmorphism via `backdrop-filter`, no em dash glyph in body).
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest -q                # 285 passing, 100/100 cov
+.venv/Scripts/python.exe -m ruff check src tests     # clean
+.venv/Scripts/python.exe -m black --check src tests  # clean
+```
+
+**Visual self-audit (`GET /` against local uvicorn):**
+- HTTP 200, `Content-Type: text/html; charset=utf-8`, 44 471 bytes
+- First chars: `<!DOCTYPE html>` … `<title>Causal On-Call: the page your on-call would have built at minute 15, at minute 1.</title>` … `import { animate, stagger, inView, spring } from "https://cdn.jsdelivr.net/npm/motion@latest/+esm";`
+- Substring checks: `Run a live investigation` ✓, `motion@latest/+esm` ✓, `oklch(` × 17 ✓, hex colors × 0 ✓, em dash × 0 ✓
+- Webhook smoke test (cold path): POST `/webhook/dynatrace-problem` returns the same brief JSON as v1 — top_recommendation, ranked_hypotheses, markdown body all intact. Contract preserved.
+
+**Demo path impact:** the script flow is unchanged (open `/`, click demo card, watch trace + brief render, jump to `/dashboard?demo=true`). What changed is that the page itself is now demoable as a *brand surface* — the hero overline + pulsing live dot + 76.8px H1 + restrained palette are the first 5 seconds the judge sees in incognito. DEMO-SCRIPT.md does NOT need editing because the click targets (data-demo="cold"/"memory"/"reject") + the brief output panel + the dashboard link are all preserved.
+
+**Postmortem flags:**
+- **Live URL still on v1.** This commit is local; Cloud Run revision `causal-oncall-00010-m6n` still serves the v1 landing. Strategist should redeploy after merge.
+- **motion.dev pinned to `@latest`.** Spec says fall back to a version pin if the URL breaks; verified working with current upstream (Nov 2025+). If a future build breaks because motion ships a v13 with API churn, pin to `motion@12.0.0` in the script tag and re-run the suite.
+- **The "Confirm hypothesis" button is still a no-op visual** (same flag as W4-S5).

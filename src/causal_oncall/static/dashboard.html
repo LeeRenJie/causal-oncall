@@ -5,74 +5,99 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Causal On-Call: Self-Improvement</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+
+    /* Color tokens (DESIGN.md — Restrained palette, OKLCH only) */
+    --bg: oklch(14% 0.01 250);
+    --surface: oklch(18% 0.012 250);
+    --surface-2: oklch(22% 0.014 250);
+    --border: oklch(28% 0.015 250);
+    --text: oklch(94% 0.008 250);
+    --text-muted: oklch(68% 0.012 250);
+    --accent: oklch(78% 0.18 145);
+    --accent-soft: oklch(78% 0.18 145 / 0.12);
+
+    --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, sans-serif;
+  }
+  * { box-sizing: border-box; }
   body {
-    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: #0d1117; color: #c9d1d9; margin: 0;
+    font-family: var(--font-sans);
+    background: var(--bg); color: var(--text); margin: 0;
     min-height: 100vh; display: flex; flex-direction: column;
     align-items: center; justify-content: center;
+    -webkit-font-smoothing: antialiased;
   }
-  .sponsor-footer {
-    margin-top: 32px; padding: 16px 0; text-align: center; width: 100%;
-  }
-  .sponsor-footer .pre {
-    color: #6e7681; font-size: 11px; text-transform: uppercase;
-    letter-spacing: 1.4px; margin-bottom: 10px;
-  }
-  .sponsor-footer .badges {
-    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
-  }
-  .sponsor-footer .badge {
-    padding: 5px 12px; border-radius: 999px; font-size: 11px;
-    font-weight: 600; border: 1px solid currentColor;
-  }
-  .sponsor-footer .badge-dynatrace { color: #1496ff; background: rgba(20, 150, 255, 0.08); }
-  .sponsor-footer .badge-gcp       { color: #4285f4; background: rgba(66, 133, 244, 0.08); }
-  .sponsor-footer .badge-gemini    { color: #ab7df8; background: rgba(171, 125, 248, 0.10); }
-  .sponsor-footer .badge-mongo     { color: #56d364; background: rgba(86, 211, 100, 0.10); }
-  .sponsor-footer .badge-phoenix   { color: #f78166; background: rgba(247, 129, 102, 0.10); }
-  .sponsor-footer .badge-cloudrun  { color: #fbbc04; background: rgba(251, 188, 4, 0.10); }
   .card {
-    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     padding: 40px 56px; max-width: 720px; width: 90%;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   }
   h1 {
-    color: #58a6ff; font-size: 14px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 1.2px; margin: 0 0 4px;
+    color: var(--text-muted); font-family: var(--font-mono);
+    font-size: 0.75rem; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 6px;
   }
-  .tagline { color: #8b949e; font-size: 13px; margin: 0 0 32px; }
-  .headline {
-    text-align: center; margin: 16px 0 8px;
-  }
+  .tagline { color: var(--text-muted); font-size: 0.875rem; margin: 0 0 32px; }
+  .headline { text-align: center; margin: 16px 0 8px; }
   .headline .label {
-    color: #8b949e; font-size: 13px; text-transform: uppercase;
-    letter-spacing: 1.4px; margin-bottom: 4px;
+    color: var(--text-muted); font-family: var(--font-mono);
+    font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 4px;
   }
   .headline .number {
-    font-size: 64px; font-weight: 700; color: #56d364;
+    font-size: 4rem; font-weight: 700; color: var(--accent);
     line-height: 1.0; font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
   }
-  .headline .qualifier { color: #c9d1d9; font-size: 16px; margin-top: 4px; }
+  .headline .qualifier { color: var(--text); font-size: 1rem; margin-top: 4px; }
   .caption {
-    text-align: center; color: #8b949e; font-size: 13px;
+    text-align: center; color: var(--text-muted); font-size: 0.875rem;
     margin: 8px 0 24px;
   }
-  .caption .delta { color: #56d364; font-weight: 600; }
+  .caption .delta { color: var(--accent); font-weight: 600; font-family: var(--font-mono); }
   .sparkline-wrap {
-    background: #0d1117; border-radius: 8px; padding: 20px 12px;
-    border: 1px solid #21262d;
+    background: var(--bg); border-radius: 4px; padding: 20px 12px;
+    border: 1px solid var(--border);
   }
   .sparkline-wrap svg { display: block; width: 100%; height: 120px; }
   .subtitle {
-    text-align: center; color: #8b949e; font-size: 12px;
+    text-align: center; color: var(--text-muted); font-size: 0.75rem;
     margin-top: 16px; font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
   }
   .footer {
-    text-align: center; color: #484f58; font-size: 11px;
-    margin-top: 24px; text-transform: uppercase; letter-spacing: 1.2px;
+    text-align: center; color: var(--text-muted); font-size: 0.75rem;
+    margin-top: 24px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-family: var(--font-mono);
   }
-  .footer .live { color: #56d364; }
+  .footer .live { color: var(--accent); }
+
+  /* Sponsor footer — matches landing v2 */
+  .sponsor-footer {
+    margin-top: 48px; padding: 24px 32px 0; text-align: center; width: 100%;
+    max-width: 720px;
+  }
+  .sponsor-pre {
+    color: var(--text-muted); font-family: var(--font-mono);
+    font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.08em; margin: 0 0 14px;
+  }
+  .sponsor-row {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center;
+  }
+  .sponsor-pill {
+    font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);
+    border: 1px solid var(--border); padding: 6px 12px; border-radius: 999px;
+    background: transparent;
+    transition: transform 150ms ease, border-color 150ms ease, color 150ms ease;
+  }
+  .sponsor-pill:hover {
+    transform: translateY(-1px); border-color: var(--text-muted); color: var(--text);
+  }
+  .sponsor-divider {
+    color: var(--border); font-family: var(--font-mono); font-size: 0.75rem;
+  }
 </style>
 </head>
 <body>
@@ -95,14 +120,17 @@
   <div class="footer">auto-refreshes every 30s &middot; <span class="live">live</span></div>
 </div>
 <footer class="sponsor-footer">
-  <div class="pre">Powered by</div>
-  <div class="badges">
-    <span class="badge badge-dynatrace">Dynatrace</span>
-    <span class="badge badge-gcp">Google Cloud Agent Builder</span>
-    <span class="badge badge-gemini">Gemini 3</span>
-    <span class="badge badge-mongo">MongoDB Atlas</span>
-    <span class="badge badge-phoenix">Arize Phoenix</span>
-    <span class="badge badge-cloudrun">Cloud Run</span>
+  <p class="sponsor-pre">Powered by</p>
+  <div class="sponsor-row">
+    <span class="sponsor-pill">Dynatrace</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">Google Cloud Agent Builder</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">Gemini 3</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">MongoDB Atlas</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">Arize Phoenix</span>
   </div>
 </footer>
 <script>
@@ -132,8 +160,8 @@
     var defs = document.createElementNS(NS, 'defs');
     defs.innerHTML =
       '<linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0%" stop-color="#56d364" stop-opacity="0.45"/>' +
-      '<stop offset="100%" stop-color="#56d364" stop-opacity="0"/>' +
+      '<stop offset="0%" stop-color="oklch(78% 0.18 145)" stop-opacity="0.4"/>' +
+      '<stop offset="100%" stop-color="oklch(78% 0.18 145)" stop-opacity="0"/>' +
       '</linearGradient>';
     svg.appendChild(defs);
     var area = document.createElementNS(NS, 'polygon');
@@ -147,7 +175,7 @@
     var line = document.createElementNS(NS, 'polyline');
     line.setAttribute('points', pts.join(' '));
     line.setAttribute('fill', 'none');
-    line.setAttribute('stroke', '#56d364');
+    line.setAttribute('stroke', 'oklch(78% 0.18 145)');
     line.setAttribute('stroke-width', '2.5');
     line.setAttribute('stroke-linejoin', 'round');
     line.setAttribute('stroke-linecap', 'round');
@@ -158,7 +186,7 @@
     dot.setAttribute('cx', last[0]);
     dot.setAttribute('cy', last[1]);
     dot.setAttribute('r', '4');
-    dot.setAttribute('fill', '#56d364');
+    dot.setAttribute('fill', 'oklch(78% 0.18 145)');
     svg.appendChild(dot);
   }
 

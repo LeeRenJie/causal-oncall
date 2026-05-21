@@ -3,288 +3,831 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Causal On-Call - the page your on-call would have built at minute 15, at minute 1</title>
+<title>Causal On-Call: the page your on-call would have built at minute 15, at minute 1.</title>
+<script type="module">
+  // motion.dev: Framer-Motion-style vanilla JS API. Pulled from jsdelivr ESM.
+  // We bind the small surface we use to window so non-module inline scripts can call it.
+  import { animate, stagger, inView, spring } from "https://cdn.jsdelivr.net/npm/motion@latest/+esm";
+  window.__motion = { animate, stagger, inView, spring };
+  // Signal that motion is ready so the boot script can replay any queued effects.
+  window.dispatchEvent(new CustomEvent("motion-ready"));
+</script>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+
+    /* Color tokens (DESIGN.md, Restrained palette, OKLCH only) */
+    --bg: oklch(14% 0.01 250);
+    --surface: oklch(18% 0.012 250);
+    --surface-2: oklch(22% 0.014 250);
+    --border: oklch(28% 0.015 250);
+    --text: oklch(94% 0.008 250);
+    --text-muted: oklch(68% 0.012 250);
+    --accent: oklch(78% 0.18 145);
+    --accent-soft: oklch(78% 0.18 145 / 0.12);
+    --warn: oklch(80% 0.15 75);
+    --danger: oklch(70% 0.17 25);
+
+    /* Typography */
+    --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, sans-serif;
+
+    /* Modular scale (1.333) */
+    --text-7xl: 4.8rem;
+    --text-5xl: 2.7rem;
+    --text-3xl: 1.6rem;
+    --text-xl: 1.2rem;
+    --text-base: 1rem;
+    --text-sm: 0.875rem;
+    --text-xs: 0.75rem;
+  }
+
   * { box-sizing: border-box; }
+  html, body { background: var(--bg); }
   body {
-    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: #0d1117; color: #c9d1d9; margin: 0; padding: 0;
+    font-family: var(--font-sans);
+    color: var(--text);
+    margin: 0;
+    padding: 0;
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-size: var(--text-base);
+    line-height: 1.55;
   }
-  a { color: #58a6ff; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; }
-  header h1 {
-    color: #56d364; font-size: 13px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1.6px; margin: 0 0 8px;
-  }
-  header .title {
-    font-size: 40px; font-weight: 700; margin: 0 0 16px;
-    color: #f0f6fc; letter-spacing: -0.5px;
-  }
-  header .tagline {
-    color: #8b949e; font-size: 17px; margin: 0 0 16px; max-width: 720px;
-    line-height: 1.5;
-  }
-  header .pitch {
-    color: #c9d1d9; font-size: 15px; max-width: 760px; line-height: 1.65;
+
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; }
+
+  /* Section width: DESIGN.md max 1180px, gutters 32px. Vertical rhythm varies per section. */
+  .section { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+
+  /* -------- Hero -------- */
+  .hero { padding: 104px 32px 80px; max-width: 1180px; margin: 0 auto; }
+  .hero-overline {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
     margin: 0 0 32px;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    opacity: 0;
+  }
+  .hero-overline .pulse-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 var(--accent-soft);
+    animation: pulse-ring 1800ms ease-out infinite;
+  }
+  @keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0 var(--accent-soft); }
+    70%  { box-shadow: 0 0 0 8px oklch(78% 0.18 145 / 0); }
+    100% { box-shadow: 0 0 0 0 oklch(78% 0.18 145 / 0); }
+  }
+  .hero h1 {
+    font-family: var(--font-sans);
+    font-size: var(--text-7xl);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.04;
+    margin: 0 0 32px;
+    color: var(--text);
+    max-width: 22ch;
+    opacity: 0;
+  }
+  .hero-lead {
+    font-size: var(--text-xl);
+    color: var(--text-muted);
+    font-weight: 400;
+    line-height: 1.5;
+    max-width: 60ch;
+    margin: 0 0 40px;
+    opacity: 0;
+  }
+  .hero-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: var(--text-base);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: 14px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease;
+    opacity: 0;
+  }
+  .hero-cta:hover { background: var(--surface); border-color: var(--text-muted); }
+  .hero-cta .arrow { transition: transform 200ms ease; }
+  .hero-cta:hover .arrow { transform: translateY(2px); }
+
+  /* -------- Demo cards -------- */
+  .demos-wrap { padding: 64px 32px 24px; max-width: 1180px; margin: 0 auto; }
+  .demos-eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin: 0 0 24px;
+    letter-spacing: 0.02em;
   }
   .demos {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
-    margin: 8px 0 24px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
   }
   .demo-card {
-    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
-    padding: 18px 18px 16px; cursor: pointer; transition: border-color 120ms ease,
-      transform 120ms ease, box-shadow 120ms ease;
-    text-align: left; color: inherit; font: inherit;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 28px 24px 24px;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    opacity: 0;
+    transform: translateY(16px);
+    transition: background 180ms ease, border-color 180ms ease;
   }
   .demo-card:hover {
-    border-color: #56d364; transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(86, 211, 100, 0.12);
+    background: var(--surface-2);
+    border-color: oklch(36% 0.015 250);
   }
-  .demo-card .ribbon {
-    color: #56d364; font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1.2px; margin: 0 0 8px;
+  .demo-card[data-busy="true"] { opacity: 0.55; cursor: progress; }
+  .demo-card .icon {
+    color: var(--accent);
+    width: 32px;
+    height: 32px;
   }
   .demo-card .label {
-    color: #f0f6fc; font-size: 16px; font-weight: 600; margin: 0 0 6px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0;
   }
-  .demo-card .sub {
-    color: #8b949e; font-size: 13px; line-height: 1.5; margin: 0;
+  .demo-card .title {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
   }
-  .demo-card[disabled] { opacity: 0.5; cursor: progress; }
-  .panel {
-    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
-    padding: 18px 20px; margin: 18px 0;
+  .demo-card .desc {
+    font-size: var(--text-base);
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.55;
+    max-width: 38ch;
   }
-  .panel h2 {
-    margin: 0 0 12px; color: #f0f6fc; font-size: 15px;
-    text-transform: uppercase; letter-spacing: 1.2px;
+  .demo-card .run-cta {
+    align-self: flex-start;
+    margin-top: 8px;
+    background: var(--accent);
+    color: oklch(14% 0.01 250);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    padding: 8px 14px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
-  .panel .empty {
-    color: #6e7681; font-size: 13px; font-style: italic;
+  .demo-card[data-busy="true"] .run-cta { background: var(--surface-2); color: var(--text-muted); }
+
+  /* -------- Trace panel -------- */
+  .trace-section { padding: 16px 32px 8px; max-width: 1180px; margin: 0 auto; }
+  .trace-panel {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    overflow: hidden;
   }
-  .trace {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
+  .trace-panel[data-shown="true"] { display: block; }
+  .trace-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
   }
-  .trace .row {
-    border-left: 3px solid #30363d; padding: 6px 10px; margin: 4px 0;
-    background: #0d1117; border-radius: 0 6px 6px 0;
+  .trace-title {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    margin: 0;
+    text-transform: uppercase;
   }
-  .trace .row.dispatched { border-left-color: #f78166; }
-  .trace .row.completed { border-left-color: #56d364; }
-  .trace .row.brief { border-left-color: #58a6ff; background: #1c2128; }
-  .trace .row.memory { border-left-color: #d29922; }
-  .trace .row.start, .trace .row.synthesizer { border-left-color: #8b949e; }
-  .trace .row .kind {
-    color: #8b949e; font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.8px;
+  .trace-status {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
-  .trace .row pre {
-    margin: 4px 0 0; white-space: pre-wrap; word-break: break-all;
-    color: #c9d1d9; font-size: 11px;
+  .trace-status.live::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse-ring 1800ms ease-out infinite;
   }
+  .trace-status.done::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-muted);
+  }
+  .trace-stream {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.7;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+  .trace-line {
+    color: var(--text);
+    padding: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .trace-line .ts { color: var(--text-muted); margin-right: 12px; }
+  .trace-line .sp { color: var(--accent); margin-right: 8px; }
+  .trace-line.live::after {
+    content: "";
+    display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    margin-left: 8px;
+    animation: pulse-ring 1400ms ease-out infinite;
+  }
+
+  /* -------- Brief panel -------- */
+  .brief-section { padding: 24px 32px 24px; max-width: 1180px; margin: 0 auto; }
+  .brief-panel { display: none; }
+  .brief-panel[data-shown="true"] { display: block; }
+
   .top-rec {
-    background: linear-gradient(135deg, #1c2128, #161b22);
-    border: 1px solid #56d364; border-radius: 10px;
-    padding: 16px 20px; margin: 8px 0 16px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
   }
   .top-rec .label {
-    color: #56d364; font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1.4px; margin: 0 0 6px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 6px;
   }
   .top-rec .body {
-    color: #f0f6fc; font-size: 16px; line-height: 1.45; font-weight: 500;
+    font-size: var(--text-base);
+    color: var(--text);
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.5;
   }
-  .memory-banner {
-    background: #2d2511; border: 1px solid #d29922; border-radius: 8px;
-    padding: 12px 16px; margin: 8px 0 16px; color: #e3b341;
-    font-size: 14px;
+
+  .memory-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
   }
-  .memory-banner strong { color: #f0c674; }
-  .hyp-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .memory-badge .icon { color: var(--accent); width: 18px; height: 18px; }
+  .memory-badge strong { color: var(--text); font-weight: 600; }
+
+  .hyp-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
   .hyp-card {
-    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
-    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    opacity: 0;
+    transform: translateY(12px);
   }
   .hyp-card header {
-    display: flex; justify-content: space-between; align-items: baseline;
-    gap: 12px; margin-bottom: 8px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
   }
-  .hyp-card .h-title {
-    color: #f0f6fc; font-size: 14px; font-weight: 600; margin: 0;
+  .hyp-head-left {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
   }
-  .hyp-card .h-rank {
-    color: #8b949e; font-weight: 700;
+  .hyp-rank {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .hyp-title {
+    font-size: var(--text-xl);
+    color: var(--text);
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.3;
+    letter-spacing: -0.005em;
+  }
+  .hyp-score {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
   .conf-wrap {
-    background: #21262d; border-radius: 4px; height: 6px;
-    overflow: hidden; margin: 4px 0 10px;
+    background: var(--accent-soft);
+    border-radius: 2px;
+    height: 4px;
+    overflow: hidden;
+    margin: 4px 0 16px;
   }
-  .conf-bar { height: 100%; border-radius: 4px; transition: width 240ms ease; }
-  .conf-bar.high { background: #56d364; }
-  .conf-bar.mid { background: #d29922; }
-  .conf-bar.low { background: #f85149; }
-  .hyp-card .next-action {
-    color: #c9d1d9; font-size: 13px; line-height: 1.5; margin: 0 0 8px;
+  .conf-bar {
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    transition: width 350ms cubic-bezier(0.165, 0.84, 0.44, 1);
   }
-  .hyp-card .next-action b { color: #f0f6fc; }
-  .accordion {
-    border-top: 1px solid #21262d; padding-top: 8px; margin-top: 8px;
+  .conf-bar.mid { background: var(--warn); }
+  .conf-bar.low { background: var(--danger); }
+  .hyp-next {
+    font-size: var(--text-base);
+    color: var(--text);
+    margin: 0 0 14px;
+    line-height: 1.55;
+    max-width: 65ch;
   }
-  .accordion summary {
-    cursor: pointer; color: #8b949e; font-size: 12px;
-    text-transform: uppercase; letter-spacing: 1px; padding: 4px 0;
+  .hyp-next .label { color: var(--text-muted); font-weight: 600; margin-right: 6px; }
+
+  .evidence-accordion {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: 12px;
+  }
+  .evidence-accordion summary {
     list-style: none;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
   }
-  .accordion summary::-webkit-details-marker { display: none; }
-  .accordion summary::before { content: "+ "; color: #56d364; }
-  .accordion[open] summary::before { content: "- "; }
-  .accordion ul { margin: 8px 0 4px 0; padding-left: 18px; }
-  .accordion li { color: #8b949e; font-size: 12px; line-height: 1.55; margin-bottom: 4px; }
-  .accordion li b { color: #c9d1d9; }
-  .hyp-buttons { display: flex; gap: 8px; margin-top: 10px; }
-  .btn {
-    border: 0; border-radius: 6px; padding: 6px 12px; font-size: 12px;
-    font-weight: 600; cursor: pointer; font-family: inherit;
-  }
-  .btn-confirm { background: #238636; color: #fff; }
-  .btn-confirm:hover { background: #2ea043; }
-  .btn-reject { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
-  .btn-reject:hover { background: #30363d; }
-  .btn-confirm[disabled], .btn-reject[disabled] { opacity: 0.5; cursor: default; }
-
-  .side-links {
-    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px;
-  }
-  .side-links a {
-    background: #21262d; color: #c9d1d9; padding: 7px 12px;
-    border-radius: 6px; font-size: 12px; border: 1px solid #30363d;
-  }
-  .side-links a:hover { background: #30363d; text-decoration: none; }
-
-  .toast {
-    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-    background: #1c2128; border: 1px solid #56d364; color: #f0f6fc;
-    padding: 10px 16px; border-radius: 8px; font-size: 13px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); z-index: 50;
-    opacity: 0; transition: opacity 200ms ease; pointer-events: none;
-  }
-  .toast.show { opacity: 1; }
-
-  footer.sponsors {
-    margin-top: 48px; padding: 24px 0; border-top: 1px solid #21262d;
+  .evidence-accordion summary::-webkit-details-marker { display: none; }
+  .evidence-accordion summary::before {
+    content: "+";
+    color: var(--accent);
+    width: 12px;
+    display: inline-block;
     text-align: center;
   }
-  footer.sponsors .pre {
-    color: #6e7681; font-size: 11px; text-transform: uppercase;
-    letter-spacing: 1.4px; margin-bottom: 12px;
+  .evidence-accordion[open] summary::before { content: "−"; }
+  .evidence-count {
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
   }
-  footer.sponsors .badges {
-    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+  .evidence-rows {
+    margin: 12px 0 4px;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 8px;
   }
-  .badge {
-    padding: 6px 14px; border-radius: 999px; font-size: 12px;
-    font-weight: 600; border: 1px solid currentColor;
+  .evidence-row {
+    display: grid;
+    grid-template-columns: 28px 60px 1fr;
+    gap: 12px;
+    align-items: baseline;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    padding: 6px 0;
   }
-  .badge-dynatrace { color: #1496ff; background: rgba(20, 150, 255, 0.08); }
-  .badge-gcp       { color: #4285f4; background: rgba(66, 133, 244, 0.08); }
-  .badge-gemini    { color: #ab7df8; background: rgba(171, 125, 248, 0.10); }
-  .badge-mongo     { color: #56d364; background: rgba(86, 211, 100, 0.10); }
-  .badge-phoenix   { color: #f78166; background: rgba(247, 129, 102, 0.10); }
-  .badge-cloudrun  { color: #fbbc04; background: rgba(251, 188, 4, 0.10); }
+  .specialist-tag {
+    width: 24px; height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .evidence-conf { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+  .evidence-summary { color: var(--text); line-height: 1.5; }
 
-  @media (max-width: 760px) {
-    .demos { grid-template-columns: 1fr; }
-    header .title { font-size: 30px; }
+  .hyp-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .btn {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 150ms ease, border-color 150ms ease;
+  }
+  .btn-confirm {
+    background: var(--accent);
+    color: oklch(14% 0.01 250);
+  }
+  .btn-confirm:hover { background: oklch(82% 0.18 145); }
+  .btn-confirm:disabled { background: var(--surface-2); color: var(--text-muted); cursor: default; }
+  .btn-reject {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .btn-reject:hover { background: var(--surface-2); border-color: var(--text-muted); }
+
+  /* -------- Result-confirmed strip -------- */
+  .result-strip {
+    display: none;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .result-strip[data-shown="true"] { display: flex; }
+  .result-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .result-pill.link { color: var(--text); cursor: pointer; transition: background 150ms ease; }
+  .result-pill.link:hover { background: var(--surface-2); }
+  .result-pill svg { width: 14px; height: 14px; }
+  .result-pill .check { color: var(--accent); }
+
+  /* -------- Sponsor footer -------- */
+  .sponsor-footer {
+    margin-top: 96px;
+    padding: 40px 32px 56px;
+    max-width: 1180px;
+    margin-left: auto;
+    margin-right: auto;
+    border-top: 1px solid var(--border);
+  }
+  .sponsor-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .sponsor-pill {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: transparent;
+    transition: transform 150ms ease, border-color 150ms ease, color 150ms ease;
+  }
+  .sponsor-pill:hover {
+    transform: translateY(-1px);
+    border-color: var(--text-muted);
+    color: var(--text);
+  }
+  .sponsor-divider {
+    color: var(--border);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    margin: 0 2px;
+  }
+  .sponsor-pre {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    margin: 0 0 14px;
+    text-transform: uppercase;
+  }
+
+  /* Toast (kept minimal for transient feedback) */
+  .toast {
+    position: fixed;
+    left: 50%; bottom: 32px;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    box-shadow: 0 12px 32px oklch(8% 0.01 250 / 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease, transform 180ms ease;
+    z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Responsive */
+  @media (max-width: 880px) {
+    .hero { padding: 64px 24px 48px; }
+    .hero h1 { font-size: 3rem; max-width: 18ch; }
+    .hero-lead { font-size: var(--text-base); }
+    .demos-wrap, .trace-section, .brief-section { padding-left: 24px; padding-right: 24px; }
+    .demos { grid-template-columns: 1fr; gap: 16px; }
+    .sponsor-footer { padding-left: 24px; padding-right: 24px; }
+  }
+
+  /* Reduced motion: collapse all animation to instant final states. */
+  @media (prefers-reduced-motion: reduce) {
+    .hero-overline, .hero h1, .hero-lead, .hero-cta,
+    .demo-card, .hyp-card, .trace-line {
+      opacity: 1 !important; transform: none !important;
+    }
+    .pulse-dot, .trace-status.live::before, .trace-line.live::after {
+      animation: none !important;
+    }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
 
-<header>
-  <h1>Causal On-Call</h1>
-  <div class="title">The page your on-call would have built at minute 15. At minute 1.</div>
-  <p class="tagline">An ADK multi-agent SRE assistant. The moment a Dynatrace problem opens, five specialists run the exact pre-mortem an experienced SRE would.</p>
-  <p class="pitch">When a P1 problem fires, the on-call's first 15 minutes are a manual scavenger hunt: dashboards, logs, deploys, Slack history. Causal On-Call converts the problem to a DQL plan, walks the Dynatrace topology, cross-references the last N deploys, runs the Davis changepoint analyzer, and produces a ranked causal hypothesis brief in under 90 seconds. It doesn't replace the on-call. It gives them a head start.</p>
-</header>
+<!-- ============================================================== -->
+<!-- HERO                                                            -->
+<!-- ============================================================== -->
+<section class="hero" aria-label="Hero">
+  <div class="hero-overline" id="hero-overline">
+    <span>v1.0</span>
+    <span>·</span>
+    <span class="pulse-dot" aria-hidden="true"></span>
+    <span>live</span>
+  </div>
 
-<section>
+  <h1 id="hero-h1">
+    An ADK multi-agent SRE assistant. Gives your on-call the page they would have built at minute 15, at minute 1.
+  </h1>
+
+  <p class="hero-lead" id="hero-lead">
+    When a Dynatrace problem opens, six agents (orchestrator, five specialists,
+    synthesizer) run the exact pre-mortem an experienced SRE would: DQL composition,
+    deploy correlation, topology blast-radius, anomaly windows, vulnerability
+    cross-check. They return a ranked causal hypothesis brief, posted to Slack and
+    written back to Grail, in about 90 seconds.
+  </p>
+
+  <a class="hero-cta" id="hero-cta" href="#demos">
+    <span>Run a live investigation</span>
+    <span class="arrow" aria-hidden="true">↓</span>
+  </a>
+</section>
+
+<!-- ============================================================== -->
+<!-- DEMO CARDS                                                      -->
+<!-- ============================================================== -->
+<section class="demos-wrap" id="demos" aria-label="Live demos">
+  <p class="demos-eyebrow">Three live demos. Each fires the real webhook.</p>
   <div class="demos">
+
+    <!-- #1 Cold investigation -->
     <button type="button" class="demo-card" data-demo="cold">
-      <div class="ribbon">Wow #1 - cold incident</div>
-      <div class="label">Run cold investigation</div>
-      <p class="sub">Payment latency spike. No memory hit. Full 5-specialist dispatch produces a ranked brief in ~90s.</p>
+      <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true">
+        <!-- Snowflake: 6 axes through centre -->
+        <line x1="16" y1="3"  x2="16" y2="29"/>
+        <line x1="5"  y1="9"  x2="27" y2="23"/>
+        <line x1="5"  y1="23" x2="27" y2="9"/>
+        <!-- Snowflake tip serifs -->
+        <polyline points="13,5  16,7  19,5"/>
+        <polyline points="13,27 16,25 19,27"/>
+        <polyline points="6,11 7,13 9,12"/>
+        <polyline points="23,20 25,19 26,21"/>
+        <polyline points="9,20 7,19 6,21"/>
+        <polyline points="23,12 25,13 26,11"/>
+        <!-- Clock face inset -->
+        <circle cx="16" cy="16" r="5"/>
+        <line x1="16" y1="16" x2="16" y2="13"/>
+        <line x1="16" y1="16" x2="18.5" y2="16"/>
+      </svg>
+      <p class="label">Wow #1 · cold</p>
+      <p class="title">Run cold investigation</p>
+      <p class="desc">
+        Open problem on payment-service. Agent runs all 5 specialists,
+        returns a ranked brief in about 90 seconds.
+      </p>
+      <span class="run-cta">Run <span aria-hidden="true">→</span></span>
     </button>
+
+    <!-- #2 Memory hit -->
     <button type="button" class="demo-card" data-demo="memory">
-      <div class="ribbon">Wow #3 - memory hit</div>
-      <div class="label">Run memory-hit (seen 14x before)</div>
-      <p class="sub">DB pool exhaustion - signature already known. Short-circuits to the proven prior fix in ~3s.</p>
+      <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true">
+        <!-- Bookmark -->
+        <path d="M8 4 L8 28 L16 22 L24 28 L24 4 Z"/>
+        <!-- Check mark inside top -->
+        <polyline points="12,11 15,14 20,9"/>
+      </svg>
+      <p class="label">Wow #3 · memory hit</p>
+      <p class="title">Run memory-hit (seen 14x before)</p>
+      <p class="desc">
+        Same problem shape we resolved 14 times in Q1. Agent short-circuits,
+        surfaces the proven fix, posts to Slack.
+      </p>
+      <span class="run-cta">Run <span aria-hidden="true">→</span></span>
     </button>
+
+    <!-- #3 Hypothesis rejection -->
     <button type="button" class="demo-card" data-demo="reject">
-      <div class="ribbon">Wow #2 - hypothesis rejection</div>
-      <div class="label">Run with hypothesis rejection</div>
-      <p class="sub">Deploy-induced regression. Rejects hypothesis #1 mid-flight; orchestrator visibly replans.</p>
+      <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true">
+        <!-- Single trunk -->
+        <line x1="6" y1="16" x2="14" y2="16"/>
+        <!-- Branch up -->
+        <line x1="14" y1="16" x2="24" y2="8"/>
+        <polyline points="20,7 24,8 23,12"/>
+        <!-- Branch down -->
+        <line x1="14" y1="16" x2="24" y2="24"/>
+        <polyline points="20,25 24,24 23,20"/>
+        <!-- Junction node -->
+        <circle cx="14" cy="16" r="1.5" fill="currentColor"/>
+      </svg>
+      <p class="label">Wow #2 · rejection + replan</p>
+      <p class="title">Run with hypothesis rejection</p>
+      <p class="desc">
+        Reject the top hypothesis mid-investigation; agent re-plans without it.
+        The moment that distinguishes agent from chatbot.
+      </p>
+      <span class="run-cta">Run <span aria-hidden="true">→</span></span>
     </button>
+
   </div>
 </section>
 
-<section class="panel">
-  <h2>Live agent trace</h2>
-  <div id="trace" class="trace">
-    <div class="empty">No investigation yet. Click a demo card to fire a webhook and watch the SSE stream below.</div>
+<!-- ============================================================== -->
+<!-- TRACE PANEL                                                     -->
+<!-- ============================================================== -->
+<section class="trace-section" aria-label="Live trace">
+  <div class="trace-panel" id="trace-panel">
+    <div class="trace-head">
+      <p class="trace-title">Agent trace</p>
+      <span class="trace-status live" id="trace-status">streaming</span>
+    </div>
+    <div class="trace-stream" id="trace-stream"></div>
   </div>
 </section>
 
-<section class="panel">
-  <h2>Incident brief</h2>
-  <div id="brief">
-    <div class="empty">The brief renders here as cards once the orchestrator emits brief-ready.</div>
+<!-- ============================================================== -->
+<!-- BRIEF PANEL                                                     -->
+<!-- ============================================================== -->
+<section class="brief-section" aria-label="Incident brief">
+  <div class="brief-panel" id="brief-panel">
+    <div id="brief-content"></div>
+    <div class="result-strip" id="result-strip">
+      <span class="result-pill">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 8 L13 3 L11 14 L7 9 Z"/>
+        </svg>
+        <span>Posted to #causal-oncall-briefs</span>
+        <svg class="check" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <polyline points="3,8 7,12 13,4"/>
+        </svg>
+      </span>
+      <span class="result-pill">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 13 L2 3"/>
+          <path d="M2 13 L14 13"/>
+          <polyline points="5,10 8,7 10,9 13,5"/>
+        </svg>
+        <span>Grail event written</span>
+        <svg class="check" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <polyline points="3,8 7,12 13,4"/>
+        </svg>
+      </span>
+      <a class="result-pill link" id="dashboard-link" href="/dashboard?demo=true"
+         target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 8 C 4 3, 12 3, 15 8 C 12 13, 4 13, 1 8 Z"/>
+          <circle cx="8" cy="8" r="2.4"/>
+        </svg>
+        <span>Open in dashboard</span>
+      </a>
+    </div>
   </div>
-  <div id="side-links" class="side-links" style="display:none"></div>
 </section>
 
-<footer class="sponsors">
-  <div class="pre">Powered by</div>
-  <div class="badges">
-    <span class="badge badge-dynatrace">Dynatrace</span>
-    <span class="badge badge-gcp">Google Cloud Agent Builder</span>
-    <span class="badge badge-gemini">Gemini 3</span>
-    <span class="badge badge-mongo">MongoDB Atlas</span>
-    <span class="badge badge-phoenix">Arize Phoenix</span>
-    <span class="badge badge-cloudrun">Cloud Run</span>
+<!-- ============================================================== -->
+<!-- SPONSOR FOOTER                                                  -->
+<!-- ============================================================== -->
+<footer class="sponsor-footer" aria-label="Powered by">
+  <p class="sponsor-pre">Powered by</p>
+  <div class="sponsor-row">
+    <span class="sponsor-pill">Dynatrace</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">Google Cloud Agent Builder</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">Gemini 3</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">MongoDB Atlas</span>
+    <span class="sponsor-divider">·</span>
+    <span class="sponsor-pill">Arize Phoenix</span>
   </div>
 </footer>
-
-</div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
   /*
-   * W4-S5 landing page interactive script.
-   *
-   * Three demo buttons (cold / memory / reject) all follow the same
-   * pattern:
-   *   1. POST the matching fixture to /webhook/dynatrace-problem.
-   *   2. Open an EventSource on /webhook/dynatrace-problem/stream/{id}
-   *      and render trace events into the trace panel.
-   *   3. When the webhook POST resolves, render the resulting brief as
-   *      cards in the brief panel + show sidebar links.
-   *   4. For the "reject" demo, after a 2s delay, POST to
-   *      /webhook/dynatrace-problem/{id}/reject?hypothesis_key=<top>
-   *      and re-render the replanned brief.
-   *
-   * The fixtures are inlined here so the page is self-contained -- one
-   * file, one GET, no extra round-trips. Each fixture mirrors the
-   * canonical JSON under tests/fixtures/incidents/.
+   * Landing-v2 boot script. Mirrors the v1 contract:
+   *   1. Demo click POSTs the fixture to /webhook/dynatrace-problem.
+   *   2. Opens an EventSource on /webhook/dynatrace-problem/stream/{id}
+   *      and renders each event as a single-line trace row.
+   *   3. When the POST resolves, renders the brief as cards.
+   *   4. For the "reject" demo, after a 2s delay, POSTs to
+   *      /webhook/dynatrace-problem/{id}/reject?hypothesis_key=<top>.
+   * Differences vs v1: trace is one-line-per-event (not JSON dump),
+   * cards animate via motion.dev, brief reveal is staggered, and the
+   * result-confirmed strip appears below the brief.
    */
+
+  // ----- Reduced-motion gate -----
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ----- Motion helpers (queue-until-ready so the hero mount never misses) -----
+  var motion = null;
+  var motionReadyQueue = [];
+  function whenMotionReady(fn) {
+    if (motion) { fn(motion); return; }
+    motionReadyQueue.push(fn);
+  }
+  function bindMotion() {
+    if (window.__motion) {
+      motion = window.__motion;
+      motionReadyQueue.splice(0).forEach(function (fn) { fn(motion); });
+    }
+  }
+  window.addEventListener("motion-ready", bindMotion);
+  // Motion may already be ready by the time this script parses (module ESM is fast).
+  bindMotion();
+
+  // ----- Demo fixtures (inlined; mirrors tests/fixtures/incidents/*.json) -----
   var FIXTURES = {
     cold: {
       problemId: "-9223372036854775807_v2",
@@ -324,44 +867,194 @@
     }
   };
 
-  var traceEl = document.getElementById("trace");
-  var briefEl = document.getElementById("brief");
-  var sideLinksEl = document.getElementById("side-links");
-  var toastEl = document.getElementById("toast");
+  // First-letter map for the specialist tag (single-letter chip).
+  var SPECIALIST_LETTER = {
+    triage: "T", topology: "Y", deploy: "D", anomaly: "A",
+    vulnerability: "V", vuln: "V", synthesizer: "S", orchestrator: "O"
+  };
+
+  // ----- Hero mount animation -----
+  function mountHero() {
+    var nodes = [
+      document.getElementById("hero-overline"),
+      document.getElementById("hero-h1"),
+      document.getElementById("hero-lead"),
+      document.getElementById("hero-cta")
+    ];
+    if (reduce) {
+      nodes.forEach(function (n) { n.style.opacity = 1; n.style.transform = "none"; });
+      return;
+    }
+    whenMotionReady(function (m) {
+      nodes.forEach(function (n, i) {
+        m.animate(
+          n,
+          { opacity: [0, 1], transform: ["translateY(12px)", "translateY(0)"] },
+          { duration: 0.6, delay: i * 0.08, easing: [0.165, 0.84, 0.44, 1] }
+        );
+      });
+    });
+  }
+
+  // ----- Demo card stagger-in on inView -----
+  function mountDemoCards() {
+    var cards = Array.prototype.slice.call(document.querySelectorAll(".demo-card"));
+    if (reduce) {
+      cards.forEach(function (c) { c.style.opacity = 1; c.style.transform = "none"; });
+      return;
+    }
+    whenMotionReady(function (m) {
+      m.inView(".demos", function () {
+        cards.forEach(function (c, i) {
+          m.animate(
+            c,
+            { opacity: [0, 1], transform: ["translateY(16px)", "translateY(0)"] },
+            { delay: i * 0.08, duration: 0.5, easing: [0.165, 0.84, 0.44, 1] }
+          );
+        });
+      }, { amount: 0.2 });
+    });
+  }
+
+  // ----- DOM refs -----
+  var tracePanel  = document.getElementById("trace-panel");
+  var traceStream = document.getElementById("trace-stream");
+  var traceStatus = document.getElementById("trace-status");
+  var briefPanel  = document.getElementById("brief-panel");
+  var briefContent = document.getElementById("brief-content");
+  var resultStrip = document.getElementById("result-strip");
+  var toastEl     = document.getElementById("toast");
+
   var currentEventSource = null;
-  var currentProblemId = null;
+  var currentProblemId   = null;
+
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    setTimeout(function () { toastEl.classList.remove("show"); }, 2400);
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function truncate(s, n) {
+    s = String(s == null ? "" : s);
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+
+  function nowStamp() {
+    var d = new Date();
+    function pad(x) { return x < 10 ? "0" + x : "" + x; }
+    return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+
+  // Pull a "specialist → summary" pair out of an SSE event payload.
+  function describeEvent(kind, data) {
+    var sp = "orchestrator";
+    var summary = kind;
+    if (!data || typeof data !== "object") {
+      return { specialist: sp, summary: summary };
+    }
+    if (kind === "orchestrator-started") {
+      sp = "orchestrator";
+      summary = "dispatching specialists for " + (data.problem_id || data.problemId || "problem");
+    } else if (kind === "specialist-dispatched") {
+      sp = data.specialist || "specialist";
+      summary = "dispatched " + sp;
+    } else if (kind === "specialist-completed") {
+      sp = data.specialist || "specialist";
+      var conf = (typeof data.confidence === "number") ? data.confidence.toFixed(2) : "n/a";
+      summary = sp + " complete (conf " + conf + ")";
+    } else if (kind === "synthesizer-started") {
+      sp = "synthesizer";
+      summary = "ranking hypotheses";
+    } else if (kind === "brief-ready") {
+      sp = "synthesizer";
+      summary = "brief ready (" + ((data.ranked_hypotheses && data.ranked_hypotheses.length) || 0) + " hypotheses)";
+    } else if (kind === "memory-short-circuit") {
+      sp = "memory";
+      summary = "pattern matched, short-circuiting (sim " + (data.similarity || "?") + ")";
+    } else if (kind === "memory-prior-hypothesis") {
+      sp = "memory";
+      summary = "prior fix: " + (data.title || data.key || "");
+    } else if (kind === "orchestrator-replanned") {
+      sp = "orchestrator";
+      summary = "replanned, rejected " + (data.rejected || "(n/a)");
+    } else if (kind === "error") {
+      sp = "orchestrator";
+      summary = "error: " + (data.message || data.error || "unknown");
+    }
+    return { specialist: sp, summary: summary };
+  }
+
+  function appendTraceLine(kind, data) {
+    // Remove the .live class from the previous last line.
+    var prev = traceStream.querySelector(".trace-line.live");
+    if (prev) prev.classList.remove("live");
+
+    var info = describeEvent(kind, data);
+    var line = document.createElement("div");
+    line.className = "trace-line live";
+    line.innerHTML =
+      '<span class="ts">[' + nowStamp() + ']</span>' +
+      '<span class="sp">' + escapeHtml(info.specialist) + '</span>' +
+      '<span class="msg">' + escapeHtml(truncate(info.summary, 100)) + '</span>';
+    traceStream.appendChild(line);
+    traceStream.scrollTop = traceStream.scrollHeight;
+
+    if (reduce) {
+      line.style.opacity = 1; line.style.transform = "none";
+    } else {
+      whenMotionReady(function (m) {
+        m.animate(
+          line,
+          { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0)"] },
+          { duration: 0.2, easing: [0.165, 0.84, 0.44, 1] }
+        );
+      });
+    }
+  }
+
+  function revealTracePanel() {
+    if (tracePanel.dataset.shown === "true") return;
+    tracePanel.dataset.shown = "true";
+    traceStatus.classList.remove("done");
+    traceStatus.classList.add("live");
+    traceStatus.textContent = "streaming";
+    if (reduce) return;
+    whenMotionReady(function (m) {
+      m.animate(
+        tracePanel,
+        { opacity: [0, 1], transform: ["translateY(12px)", "translateY(0)"] },
+        { duration: 0.35, easing: [0.165, 0.84, 0.44, 1] }
+      );
+    });
+  }
+
+  function markTraceDone() {
+    traceStatus.classList.remove("live");
+    traceStatus.classList.add("done");
+    traceStatus.textContent = "complete";
+    var last = traceStream.querySelector(".trace-line.live");
+    if (last) last.classList.remove("live");
+  }
 
   function resetPanels() {
-    traceEl.innerHTML = '<div class="empty">Investigation starting&hellip;</div>';
-    briefEl.innerHTML = '<div class="empty">Awaiting orchestrator&hellip;</div>';
-    sideLinksEl.style.display = "none";
-    sideLinksEl.innerHTML = "";
     if (currentEventSource) {
       try { currentEventSource.close(); } catch (e) { /* noop */ }
       currentEventSource = null;
     }
-  }
-
-  function appendTraceRow(kind, data) {
-    if (traceEl.querySelector(".empty")) {
-      traceEl.innerHTML = "";
-    }
-    var cls = "row";
-    if (kind === "specialist-dispatched") cls += " dispatched";
-    else if (kind === "specialist-completed") cls += " completed";
-    else if (kind === "brief-ready") cls += " brief";
-    else if (kind === "memory-short-circuit" || kind === "memory-prior-hypothesis") cls += " memory";
-    else if (kind === "orchestrator-started") cls += " start";
-    else if (kind === "synthesizer-started") cls += " synthesizer";
-    var div = document.createElement("div");
-    div.className = cls;
-    div.innerHTML =
-      '<span class="kind">' + kind + '</span>' +
-      '<pre>' + JSON.stringify(data, null, 2) + "</pre>";
-    traceEl.appendChild(div);
+    traceStream.innerHTML = "";
+    briefContent.innerHTML = "";
+    briefPanel.dataset.shown = "false";
+    resultStrip.dataset.shown = "false";
   }
 
   function startTrace(problemId) {
+    revealTracePanel();
     var src = new EventSource("/webhook/dynatrace-problem/stream/" + encodeURIComponent(problemId));
     [
       "orchestrator-started", "specialist-dispatched", "specialist-completed",
@@ -371,153 +1064,26 @@
       src.addEventListener(k, function (ev) {
         var parsed;
         try { parsed = JSON.parse(ev.data); } catch (e) { parsed = { raw: ev.data }; }
-        appendTraceRow(k, parsed);
-        if (k === "brief-ready") { src.close(); }
+        appendTraceLine(k, parsed);
+        if (k === "brief-ready") {
+          src.close();
+          markTraceDone();
+        }
       });
     });
-    src.onerror = function () { /* server may have closed cleanly after brief-ready */ };
+    src.onerror = function () { /* server closes cleanly after brief-ready */ };
     return src;
   }
 
+  // ----- Brief rendering -----
+
   function confidenceClass(score) {
-    if (score >= 0.8) return "high";
+    if (score >= 0.8) return "";
     if (score >= 0.5) return "mid";
     return "low";
   }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-
-  /*
-   * Renders the brief returned by the webhook POST as a card stack:
-   *   - Memory-hit banner (if from_memory)
-   *   - Top recommendation banner
-   *   - One card per ranked hypothesis with confidence bar + accordion
-   * The Confirm button is a no-op visual; the Reject button calls back
-   * into /reject and re-renders the replanned brief.
-   */
-  function renderBriefCards(brief) {
-    briefEl.innerHTML = "";
-
-    if (brief.from_memory) {
-      var occurrences = 14;
-      if (brief.ranked_hypotheses && brief.ranked_hypotheses[0]) {
-        var t = brief.ranked_hypotheses[0].title || "";
-        var m = t.match(/seen\s+(\d+)x/i);
-        if (m) { occurrences = parseInt(m[1], 10); }
-      }
-      var memBanner = document.createElement("div");
-      memBanner.className = "memory-banner";
-      memBanner.innerHTML =
-        "<strong>Pattern matched</strong> &middot; seen " + occurrences +
-        "x before. Showing the historical confirmed fix.";
-      briefEl.appendChild(memBanner);
-    }
-
-    if (brief.top_recommendation) {
-      var topBox = document.createElement("div");
-      topBox.className = "top-rec";
-      topBox.innerHTML =
-        '<div class="label">Top recommendation</div>' +
-        '<div class="body">' + escapeHtml(brief.top_recommendation) + "</div>";
-      briefEl.appendChild(topBox);
-    }
-
-    var grid = document.createElement("div");
-    grid.className = "hyp-grid";
-
-    var hyps = brief.ranked_hypotheses || [];
-    if (!hyps.length) {
-      var empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent = "No hypotheses returned.";
-      briefEl.appendChild(empty);
-    }
-
-    hyps.forEach(function (h) {
-      var card = document.createElement("div");
-      card.className = "hyp-card";
-      var score = typeof h.score === "number" ? h.score : 0;
-      var pct = Math.round(score * 100);
-      var cls = confidenceClass(score);
-
-      var supporting = "";
-      var fullHyp = findFullHypothesis(brief, h.key);
-      if (fullHyp && fullHyp.supporting_evidence && fullHyp.supporting_evidence.length) {
-        supporting = '<ul>' + fullHyp.supporting_evidence.map(function (ev) {
-          return "<li><b>" + escapeHtml(ev.specialist || "specialist") +
-            "</b> (conf " + Number(ev.confidence || 0).toFixed(2) + ") &mdash; " +
-            escapeHtml(ev.summary || "") + "</li>";
-        }).join("") + "</ul>";
-      } else {
-        supporting = '<ul><li>No structured evidence list available in this payload.</li></ul>';
-      }
-
-      card.innerHTML =
-        '<header>' +
-          '<p class="h-title"><span class="h-rank">#' + h.rank + '</span> &middot; ' +
-            escapeHtml(h.title || h.key) + '</p>' +
-          '<span style="color:#8b949e;font-size:12px">score ' + (score).toFixed(2) + '</span>' +
-        '</header>' +
-        '<div class="conf-wrap"><div class="conf-bar ' + cls +
-          '" style="width:' + pct + '%"></div></div>' +
-        '<p class="next-action"><b>Next action:</b> ' +
-          escapeHtml((fullHyp && fullHyp.next_action) || brief.top_recommendation || "") + '</p>' +
-        '<details class="accordion">' +
-          '<summary>Supporting evidence</summary>' +
-          supporting +
-        '</details>' +
-        '<div class="hyp-buttons">' +
-          '<button type="button" class="btn btn-confirm" data-key="' + escapeHtml(h.key) +
-            '">Confirm hypothesis</button>' +
-          '<button type="button" class="btn btn-reject" data-key="' + escapeHtml(h.key) +
-            '">Reject hypothesis</button>' +
-        '</div>';
-      grid.appendChild(card);
-    });
-    briefEl.appendChild(grid);
-
-    grid.querySelectorAll(".btn-confirm").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        btn.disabled = true; btn.textContent = "Confirmed";
-        showToast("Hypothesis confirmed (visual only - feedback channel disabled in demo).");
-      });
-    });
-    grid.querySelectorAll(".btn-reject").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        rejectHypothesis(btn.dataset.key);
-      });
-    });
-
-    sideLinksEl.style.display = "flex";
-    sideLinksEl.innerHTML = "";
-    var slack = document.createElement("a");
-    slack.href = "#"; slack.textContent = "View Slack post";
-    slack.addEventListener("click", function (e) {
-      e.preventDefault();
-      showToast("Check #causal-oncall-briefs in the demo workspace.");
-    });
-    sideLinksEl.appendChild(slack);
-
-    var grail = document.createElement("a");
-    grail.href = "/grail-event/" + encodeURIComponent(brief.problem_id || currentProblemId);
-    grail.target = "_blank"; grail.rel = "noopener";
-    grail.textContent = "View Dynatrace Grail event";
-    sideLinksEl.appendChild(grail);
-
-    var dash = document.createElement("a");
-    dash.href = "/dashboard?demo=true"; dash.target = "_blank"; dash.rel = "noopener";
-    dash.textContent = "Open in dashboard";
-    sideLinksEl.appendChild(dash);
-  }
-
   function findFullHypothesis(brief, key) {
-    /* The webhook response's ranked_hypotheses array is the summary; the
-       full Hypothesis (with supporting_evidence) is reconstructable from
-       the markdown but not from the JSON. We reuse whatever fields exist. */
     if (!brief.ranked_hypotheses) return null;
     for (var i = 0; i < brief.ranked_hypotheses.length; i++) {
       if (brief.ranked_hypotheses[i].key === key) {
@@ -527,10 +1093,152 @@
     return null;
   }
 
-  function showToast(message) {
-    toastEl.textContent = message;
-    toastEl.classList.add("show");
-    setTimeout(function () { toastEl.classList.remove("show"); }, 2400);
+  function renderBriefCards(brief) {
+    briefContent.innerHTML = "";
+    briefPanel.dataset.shown = "true";
+
+    // Memory-hit badge
+    if (brief.from_memory) {
+      var occurrences = 14;
+      if (brief.ranked_hypotheses && brief.ranked_hypotheses[0]) {
+        var t = brief.ranked_hypotheses[0].title || "";
+        var m = t.match(/seen\s+(\d+)x/i);
+        if (m) { occurrences = parseInt(m[1], 10); }
+      }
+      var badge = document.createElement("div");
+      badge.className = "memory-badge";
+      badge.innerHTML =
+        '<svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor"' +
+        ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M5 2 L5 16 L9 13 L13 16 L13 2 Z"/>' +
+        '<polyline points="7,6 8.5,7.5 11,5"/>' +
+        '</svg>' +
+        '<span><strong>Pattern matched</strong>, seen ' + occurrences +
+        'x before. Showing historical fix.</span>';
+      briefContent.appendChild(badge);
+    }
+
+    // Top-recommendation banner
+    if (brief.top_recommendation) {
+      var top = document.createElement("div");
+      top.className = "top-rec";
+      top.innerHTML =
+        '<p class="label">Next action</p>' +
+        '<p class="body">' + escapeHtml(brief.top_recommendation) + '</p>';
+      briefContent.appendChild(top);
+    }
+
+    // Hypothesis grid
+    var grid = document.createElement("div");
+    grid.className = "hyp-grid";
+    var hyps = brief.ranked_hypotheses || [];
+    if (!hyps.length) {
+      var empty = document.createElement("p");
+      empty.style.color = "var(--text-muted)";
+      empty.textContent = "No hypotheses returned.";
+      briefContent.appendChild(empty);
+    }
+
+    hyps.forEach(function (h) {
+      var card = document.createElement("div");
+      card.className = "hyp-card";
+      var score = typeof h.score === "number" ? h.score : 0;
+      var pct = Math.round(score * 100);
+      var cls = confidenceClass(score);
+      var fullHyp = findFullHypothesis(brief, h.key);
+      var evidence = (fullHyp && fullHyp.supporting_evidence) || [];
+
+      var evRowsHtml = "";
+      if (evidence.length) {
+        evRowsHtml = evidence.map(function (ev) {
+          var sp = (ev.specialist || "specialist").toLowerCase();
+          var letter = SPECIALIST_LETTER[sp] || sp.slice(0, 1).toUpperCase();
+          var conf = Number(ev.confidence || 0).toFixed(2);
+          return (
+            '<li class="evidence-row">' +
+              '<span class="specialist-tag">' + escapeHtml(letter) + '</span>' +
+              '<span class="evidence-conf">conf ' + conf + '</span>' +
+              '<span class="evidence-summary">' + escapeHtml(ev.summary || "") + '</span>' +
+            '</li>'
+          );
+        }).join("");
+      } else {
+        evRowsHtml = '<li class="evidence-row">' +
+          '<span class="specialist-tag">·</span>' +
+          '<span class="evidence-conf"></span>' +
+          '<span class="evidence-summary">No structured evidence list in this payload.</span>' +
+          '</li>';
+      }
+
+      var rank = h.rank || 1;
+      card.innerHTML =
+        '<header>' +
+          '<div class="hyp-head-left">' +
+            '<span class="hyp-rank">#' + escapeHtml(rank) + '</span>' +
+            '<h3 class="hyp-title">' + escapeHtml(h.title || h.key) + '</h3>' +
+          '</div>' +
+          '<span class="hyp-score">score ' + score.toFixed(2) + '</span>' +
+        '</header>' +
+        '<div class="conf-wrap"><div class="conf-bar ' + cls +
+          '" data-target="' + pct + '"></div></div>' +
+        '<p class="hyp-next"><span class="label">Recommended action:</span> ' +
+          escapeHtml((fullHyp && fullHyp.next_action) || brief.top_recommendation || "") + '</p>' +
+        '<details class="evidence-accordion">' +
+          '<summary><span>Supporting evidence</span>' +
+          '<span class="evidence-count">' + evidence.length + ' findings</span></summary>' +
+          '<ul class="evidence-rows">' + evRowsHtml + '</ul>' +
+        '</details>' +
+        '<div class="hyp-buttons">' +
+          '<button type="button" class="btn btn-confirm" data-key="' + escapeHtml(h.key) + '">' +
+            'Confirm hypothesis #' + escapeHtml(rank) + '</button>' +
+          '<button type="button" class="btn btn-reject" data-key="' + escapeHtml(h.key) + '">' +
+            'Reject hypothesis #' + escapeHtml(rank) + '</button>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+    briefContent.appendChild(grid);
+
+    // Animate: stagger cards, then animate confidence bars.
+    var cards = grid.querySelectorAll(".hyp-card");
+    if (reduce) {
+      cards.forEach(function (c) { c.style.opacity = 1; c.style.transform = "none"; });
+      grid.querySelectorAll(".conf-bar").forEach(function (bar) {
+        bar.style.width = bar.dataset.target + "%";
+      });
+    } else {
+      whenMotionReady(function (m) {
+        cards.forEach(function (c, i) {
+          m.animate(
+            c,
+            { opacity: [0, 1], transform: ["translateY(12px)", "translateY(0)"] },
+            { delay: i * 0.06, duration: 0.5, easing: [0.165, 0.84, 0.44, 1] }
+          );
+        });
+      });
+      // Confidence bars: CSS transition handles the actual fill animation.
+      setTimeout(function () {
+        grid.querySelectorAll(".conf-bar").forEach(function (bar) {
+          bar.style.width = bar.dataset.target + "%";
+        });
+      }, 120);
+    }
+
+    // Wire confirm / reject buttons.
+    grid.querySelectorAll(".btn-confirm").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.disabled = true;
+        btn.textContent = "Confirmed";
+        showToast("Hypothesis confirmed (visual only in demo).");
+      });
+    });
+    grid.querySelectorAll(".btn-reject").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        rejectHypothesis(btn.dataset.key);
+      });
+    });
+
+    // Reveal the result-confirmed strip
+    resultStrip.dataset.shown = "true";
   }
 
   function fireWebhook(payload) {
@@ -546,7 +1254,7 @@
 
   function rejectHypothesis(key) {
     if (!currentProblemId) return;
-    showToast("Rejecting '" + key + "' and replanning...");
+    showToast("Rejecting '" + key + "', replanning...");
     fetch(
       "/webhook/dynatrace-problem/" + encodeURIComponent(currentProblemId) +
         "/reject?hypothesis_key=" + encodeURIComponent(key),
@@ -555,7 +1263,7 @@
       if (!r.ok) { throw new Error("reject failed: " + r.status); }
       return r.json();
     }).then(function (brief) {
-      appendTraceRow("orchestrator-replanned", { rejected: key });
+      appendTraceLine("orchestrator-replanned", { rejected: key });
       renderBriefCards(brief);
       showToast("Replanned without '" + key + "'.");
     }).catch(function (err) {
@@ -565,11 +1273,15 @@
 
   function runDemo(kind) {
     resetPanels();
+    var card = document.querySelector('.demo-card[data-demo="' + kind + '"]');
+    if (card) card.dataset.busy = "true";
     var payload = FIXTURES[kind];
     currentProblemId = payload.problemId;
-    startTrace(currentProblemId);
+    currentEventSource = startTrace(currentProblemId);
+
     fireWebhook(payload).then(function (brief) {
       renderBriefCards(brief);
+      if (card) card.dataset.busy = "false";
       if (kind === "reject") {
         setTimeout(function () {
           var top = brief.ranked_hypotheses && brief.ranked_hypotheses[0];
@@ -577,17 +1289,43 @@
         }, 2000);
       }
     }).catch(function (err) {
-      briefEl.innerHTML = '<div class="empty">Investigation failed: ' +
-        escapeHtml(err.message) + "</div>";
+      if (card) card.dataset.busy = "false";
+      briefPanel.dataset.shown = "true";
+      briefContent.innerHTML =
+        '<p style="color:var(--danger);font-family:var(--font-mono);font-size:var(--text-sm)">' +
+        'Investigation failed: ' + escapeHtml(err.message) + '</p>';
     });
   }
 
+  // ----- Wire demo card clicks (with tap-scale spring) -----
   document.querySelectorAll(".demo-card").forEach(function (card) {
     card.addEventListener("click", function () {
       var kind = card.dataset.demo;
-      if (FIXTURES[kind]) { runDemo(kind); }
+      if (!FIXTURES[kind]) return;
+      if (!reduce) {
+        whenMotionReady(function (m) {
+          m.animate(card, { scale: [1, 0.97, 1] }, { duration: 0.18, easing: m.spring({ stiffness: 200, damping: 25 }) });
+        });
+      }
+      runDemo(kind);
     });
+    if (!reduce) {
+      card.addEventListener("mouseenter", function () {
+        whenMotionReady(function (m) {
+          m.animate(card, { scale: 1.01 }, { duration: 0.15, easing: m.spring({ stiffness: 200, damping: 25 }) });
+        });
+      });
+      card.addEventListener("mouseleave", function () {
+        whenMotionReady(function (m) {
+          m.animate(card, { scale: 1 }, { duration: 0.15, easing: m.spring({ stiffness: 200, damping: 25 }) });
+        });
+      });
+    }
   });
+
+  // ----- Boot -----
+  mountHero();
+  mountDemoCards();
 })();
 </script>
 </body>

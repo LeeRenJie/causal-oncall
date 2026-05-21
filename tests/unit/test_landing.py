@@ -34,9 +34,10 @@ def test_render_landing_page_contains_hero_demo_buttons_and_sponsor_footer():
     HTML") never silently regresses if someone re-skins the page.
     """
     body = render_landing_page()
-    # Hero copy
-    assert "Causal On-Call" in body
-    assert "at minute 15. At minute 1." in body
+    # Hero copy — H1 phrasing + brand title
+    assert "Causal On-Call" in body  # appears in the <title> tag
+    assert "ADK multi-agent SRE assistant" in body
+    assert "at minute 15, at minute 1." in body
     # Three demo card labels
     assert "Run cold investigation" in body
     assert "Run memory-hit (seen 14x before)" in body
@@ -50,6 +51,19 @@ def test_render_landing_page_contains_hero_demo_buttons_and_sponsor_footer():
     # SSE wiring is inline (no separate JS file).
     assert "EventSource" in body
     assert "renderBriefCards" in body
+    # Impeccable design hard floors: OKLCH-only palette, motion.dev loaded,
+    # no `#000` / `#fff` leaked, no gradient text, no glassmorphism, no em
+    # dashes in user-facing copy.
+    assert "oklch(" in body
+    assert "motion@latest/+esm" in body
+    assert "#000" not in body
+    assert "#fff" not in body
+    assert "background-clip: text" not in body  # gradient text ban
+    assert "backdrop-filter" not in body  # glassmorphism ban
+    # The em dash (—) must not appear in user-facing copy. The CSS does
+    # use a unicode minus glyph for the accordion collapse marker; that's
+    # the only legitimate non-ASCII punctuation. We allow it explicitly.
+    assert "—" not in body  # em dash
 
 
 def test_render_grail_event_page_substitutes_problem_id():

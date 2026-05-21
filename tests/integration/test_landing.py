@@ -37,9 +37,10 @@ def test_landing_page_returns_html_with_hero_demo_buttons_and_sponsors(client: T
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     body = resp.text
-    # Hero
-    assert "Causal On-Call" in body
-    assert "at minute 15. At minute 1." in body
+    # Hero — H1 + brand surface
+    assert "Causal On-Call" in body  # appears in <title>
+    assert "ADK multi-agent SRE assistant" in body
+    assert "at minute 15, at minute 1." in body
     # Three demo cards
     assert "Run cold investigation" in body
     assert "Run memory-hit (seen 14x before)" in body
@@ -49,6 +50,9 @@ def test_landing_page_returns_html_with_hero_demo_buttons_and_sponsors(client: T
     assert "Google Cloud Agent Builder" in body
     assert "MongoDB Atlas" in body
     assert "Arize Phoenix" in body
+    # Motion library loaded + OKLCH color tokens applied (no #000/#fff)
+    assert "motion@latest/+esm" in body
+    assert "oklch(" in body
 
 
 def test_warmup_returns_lightweight_json_contract(client: TestClient):
