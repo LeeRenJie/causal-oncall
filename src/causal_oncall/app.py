@@ -37,6 +37,11 @@ from causal_oncall.dynatrace_client import (  # pragma: no cover
     DynatraceClient,
     DynatraceClientConfig,
 )
+from causal_oncall.landing import (  # pragma: no cover
+    build_warmup_status,
+    render_grail_event_page,
+    render_landing_page,
+)
 from causal_oncall.memory_store import MemoryStore, MemoryStoreConfig  # pragma: no cover
 from causal_oncall.orchestrator import Orchestrator, OrchestratorConfig  # pragma: no cover
 from causal_oncall.phoenix_tracer import PhoenixTracer  # pragma: no cover
@@ -211,9 +216,11 @@ def _build_dev_wiring() -> _Wiring:  # pragma: no cover  # only used for local c
     # bootstrap, but Slack is a single API call per brief — no state, no
     # subprocess. Falls back to None if any of the 3 env vars is missing.
     slack: SlackNotifier | None = None
-    if os.environ.get("SLACK_BOT_TOKEN") and os.environ.get(
-        "SLACK_SIGNING_SECRET"
-    ) and os.environ.get("SLACK_BRIEF_CHANNEL_ID"):
+    if (
+        os.environ.get("SLACK_BOT_TOKEN")
+        and os.environ.get("SLACK_SIGNING_SECRET")
+        and os.environ.get("SLACK_BRIEF_CHANNEL_ID")
+    ):
         slack = SlackNotifier(
             SlackNotifierConfig(
                 bot_token=os.environ["SLACK_BOT_TOKEN"],
@@ -338,6 +345,72 @@ async def trace_stream(problem_id: str) -> StreamingResponse:
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",  # disable nginx/proxy buffering
         },
+    )
+
+
+@app.get("/")  # pragma: no cover  # W4-S5 landing page (replaces 307 to /dashboard)
+async def landing() -> HTMLResponse:
+    """Render the public landing page with 3 interactive demo cards."""
+    return HTMLResponse(render_landing_page())
+
+
+@app.get("/warmup")  # pragma: no cover  # W4-S5 pre-warm endpoint
+async def warmup() -> JSONResponse:
+    """Lightweight pre-warm hit.
+
+    Used by ``scripts/prewarm.sh`` / ``scripts/prewarm.ps1`` to keep the
+    Cloud Run container hot in the 5 minutes leading up to a demo
+    recording. No LLM/MCP calls, no Mongo round-trip -- by design.
+    """
+    return JSONResponse(build_warmup_status().to_dict())
+
+
+@app.get("/grail-event/{problem_id}")  # pragma: no cover  # W4-S5 event viewer
+async def grail_event_page(problem_id: str) -> HTMLResponse:
+    """Render a static JSON viewer for the CUSTOM_INFO event we ingested."""
+    return HTMLResponse(render_grail_event_page(problem_id))
+
+
+@app.post("/webhook/dynatrace-problem/{problem_id}/reject")  # pragma: no cover  # W4-S5 replan
+async def reject_hypothesis(problem_id: str, hypothesis_key: str) -> JSONResponse:
+    """Re-run the synthesizer with one hypothesis removed.
+
+    Powers wow #2 from the landing page's third demo card. Calls back
+    into ``Orchestrator.reject_hypothesis_and_replan`` using the
+    previously cached evidence bag for this problem id.
+    """
+    wiring: _Wiring = app.state.wiring
+    # Reconstruct a minimal Brief stub carrying just the problem_id; the
+    # orchestrator will look up the cached evidence/signature and
+    # synthesise a fresh brief minus the rejected hypothesis. The
+    # `top_recommendation` placeholder is only used by the fallback
+    # path inside the orchestrator when no cached evidence exists.
+    from datetime import UTC, datetime
+
+    from causal_oncall.domain.brief import Brief
+
+    stub = Brief(
+        problem_id=problem_id,
+        generated_at=datetime.now(UTC),
+        ranked_hypotheses=(),
+        top_recommendation="(replanning)",
+    )
+    replanned = wiring.orchestrator.reject_hypothesis_and_replan(stub, hypothesis_key)
+    return JSONResponse(
+        {
+            "brief_id": replanned.problem_id,
+            "brief_url": f"/briefs/{replanned.problem_id}.md",
+            "top_recommendation": replanned.top_recommendation,
+            "ranked_hypotheses": [
+                {"rank": h.rank, "key": h.key, "title": h.title, "score": h.score}
+                for h in replanned.ranked_hypotheses
+            ],
+            "memory_short_circuit": replanned.memory_short_circuit,
+            "from_memory": replanned.from_memory,
+            "pattern_match_score": replanned.pattern_match_score,
+            "markdown": replanned.to_markdown(),
+            "rejected_hypothesis_key": hypothesis_key,
+        }
     )
 
 

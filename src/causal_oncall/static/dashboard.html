@@ -9,8 +9,29 @@
   body {
     font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
     background: #0d1117; color: #c9d1d9; margin: 0;
-    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
   }
+  .sponsor-footer {
+    margin-top: 32px; padding: 16px 0; text-align: center; width: 100%;
+  }
+  .sponsor-footer .pre {
+    color: #6e7681; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 1.4px; margin-bottom: 10px;
+  }
+  .sponsor-footer .badges {
+    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  }
+  .sponsor-footer .badge {
+    padding: 5px 12px; border-radius: 999px; font-size: 11px;
+    font-weight: 600; border: 1px solid currentColor;
+  }
+  .sponsor-footer .badge-dynatrace { color: #1496ff; background: rgba(20, 150, 255, 0.08); }
+  .sponsor-footer .badge-gcp       { color: #4285f4; background: rgba(66, 133, 244, 0.08); }
+  .sponsor-footer .badge-gemini    { color: #ab7df8; background: rgba(171, 125, 248, 0.10); }
+  .sponsor-footer .badge-mongo     { color: #56d364; background: rgba(86, 211, 100, 0.10); }
+  .sponsor-footer .badge-phoenix   { color: #f78166; background: rgba(247, 129, 102, 0.10); }
+  .sponsor-footer .badge-cloudrun  { color: #fbbc04; background: rgba(251, 188, 4, 0.10); }
   .card {
     background: #161b22; border: 1px solid #30363d; border-radius: 12px;
     padding: 40px 56px; max-width: 720px; width: 90%;
@@ -73,6 +94,17 @@
   <div class="subtitle" id="subtitle">--</div>
   <div class="footer">auto-refreshes every 30s &middot; <span class="live">live</span></div>
 </div>
+<footer class="sponsor-footer">
+  <div class="pre">Powered by</div>
+  <div class="badges">
+    <span class="badge badge-dynatrace">Dynatrace</span>
+    <span class="badge badge-gcp">Google Cloud Agent Builder</span>
+    <span class="badge badge-gemini">Gemini 3</span>
+    <span class="badge badge-mongo">MongoDB Atlas</span>
+    <span class="badge badge-phoenix">Arize Phoenix</span>
+    <span class="badge badge-cloudrun">Cloud Run</span>
+  </div>
+</footer>
 <script>
 (function () {
   var qs = new URLSearchParams(window.location.search);

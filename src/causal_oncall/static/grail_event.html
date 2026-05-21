@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Causal On-Call - Grail event for __PROBLEM_ID__</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #0d1117; color: #c9d1d9; margin: 0; padding: 32px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 {
+    color: #1496ff; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1.4px; margin: 0 0 6px;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .title {
+    color: #f0f6fc; font-size: 24px; font-weight: 600; margin: 0 0 6px;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .sub {
+    color: #8b949e; font-size: 13px; margin: 0 0 24px;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .panel {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 20px 22px; margin: 16px 0;
+  }
+  .panel h2 {
+    margin: 0 0 8px; color: #1496ff; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 1.4px;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-size: 13px; line-height: 1.55; color: #c9d1d9;
+  }
+  .kv { display: grid; grid-template-columns: 220px 1fr; gap: 6px 18px; font-size: 13px; }
+  .kv dt { color: #8b949e; }
+  .kv dd { color: #f0f6fc; margin: 0; word-break: break-all; }
+  .pill {
+    display: inline-block; background: rgba(20, 150, 255, 0.12);
+    color: #1496ff; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a.back {
+    color: #58a6ff; text-decoration: none; font-size: 13px;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a.back:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<a class="back" href="/">&larr; back to demo</a>
+
+<div style="margin-top:12px"><span class="pill">CUSTOM_INFO event</span></div>
+<h1>Dynatrace Grail event viewer</h1>
+<div class="title">Investigation event for problem __PROBLEM_ID__</div>
+<p class="sub">This is the CUSTOM_INFO event Causal On-Call writes into the Dynatrace Grail event store after every investigation. In production it surfaces on the problem timeline next to operator-authored notes.</p>
+
+<section class="panel">
+  <h2>Event envelope</h2>
+  <dl class="kv">
+    <dt>event.type</dt><dd>CUSTOM_INFO</dd>
+    <dt>event.source</dt><dd>causal-oncall</dd>
+    <dt>event.kind</dt><dd>investigation-complete</dd>
+    <dt>dt.entity.problem</dt><dd>__PROBLEM_ID__</dd>
+    <dt>causal_oncall.investigation_id</dt><dd>causal-oncall-__PROBLEM_ID__</dd>
+    <dt>causal_oncall.brief_schema_version</dt><dd>2</dd>
+    <dt>timestamp</dt><dd>(set at ingest time)</dd>
+  </dl>
+</section>
+
+<section class="panel">
+  <h2>hypothesis_summary</h2>
+  <pre>#1 db_pool_exhaustion: DB connection pool exhausted by deploy v412 (score=0.83)
+#2 deploy_regression: New code path serialised inside a DB transaction (score=0.62)
+#3 cve_exposure: CVE-2026-1234 advisory in the same window (score=0.41)</pre>
+</section>
+
+<section class="panel">
+  <h2>brief_md (truncated for display)</h2>
+  <pre># Causal On-Call brief for __PROBLEM_ID__
+
+**Next action:** Roll back deploy v412 on payment-service.
+
+## Ranked hypotheses
+
+### 1. DB connection pool exhausted by deploy v412
+_score: 0.83_
+
+**Recommended action:** Roll back deploy v412 on payment-service.
+
+**Supporting evidence:**
+- (anomaly_window, conf=0.91) max_connections held at ceiling for 6 minutes during the incident
+- (deploy_correlation, conf=0.88) Deploy v412 introduced a synchronous call inside a DB transaction
+- (triage, conf=0.78) Affected entities resolve to payment-service production zone
+
+### 2. Deploy regression (synchronous DB serialisation)
+_score: 0.62_
+
+**Recommended action:** Bisect commits in v412 to isolate the offending code path.
+
+(...)</pre>
+</section>
+
+<section class="panel">
+  <h2>How this event lands in Grail</h2>
+  <pre>1. Orchestrator finalises the brief.
+2. DynatraceClient.send_investigation_event() ingests this envelope
+   via the Events API.
+3. Dynatrace correlates on `dt.entity.problem` and pins the event to
+   the problem's timeline.
+4. The on-call sees the investigation alongside their own notes.</pre>
+</section>
+
+</div>
+</body>
+</html>

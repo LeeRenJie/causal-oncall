@@ -4,10 +4,31 @@ Run this checklist immediately before each take. Three consecutive clean takes a
 
 ---
 
+## Pre-recording warmup (do this FIRST, runs alongside other prep)
+
+In a separate terminal, launch the pre-warm script 5 minutes before the recording window starts. It hits `GET /warmup` every 30 seconds — the endpoint is lightweight by design (no LLM, no MCP, no Mongo) so the warmup itself never bottlenecks the demo.
+
+```bash
+# macOS / Linux / WSL
+./scripts/prewarm.sh
+
+# Windows PowerShell
+.\scripts\prewarm.ps1
+```
+
+Leave it running until you've finished the take. Output looks like:
+```
+[2026-05-21T05:55:00Z] http=200 body={"warm":true,"service_uptime_sec":214,"ts":"..."}
+```
+
+If `service_uptime_sec` ever resets to a small value mid-warmup, Cloud Run rotated the container — give it another minute before recording.
+
+---
+
 ## 10-item pre-flight (do once per recording session, ~5 min)
 
-- [ ] **1. Live URL is up.** `curl -sS -o /dev/null -w "%{http_code}\n" https://causal-oncall-856589756095.us-central1.run.app/dashboard?demo=true` returns `200`. If `404`/`5xx`, surface to user immediately — Cloud Run revision may have been torn down.
-- [ ] **2. Cloud Run is warm.** Hit `/dashboard?demo=true` once 60 seconds before recording. Cold-start adds 5-15s; this is the silent demo-killer.
+- [ ] **1. Live URL is up.** `curl -sS -o /dev/null -w "%{http_code}\n" https://causal-oncall-856589756095.us-central1.run.app/` returns `200` (landing page). Also check `/dashboard?demo=true`, `/warmup`. If any `404`/`5xx`, surface to user immediately — Cloud Run revision may have been torn down.
+- [ ] **2. Cloud Run is warm.** The pre-warm script above must be running. Confirm at least 2 successful `http=200` pings in its output before clicking Record.
 - [ ] **3. Dashboard data shape is right.** `curl -sS https://causal-oncall-856589756095.us-central1.run.app/dashboard/data?demo=true` returns `rolling_accuracy: 0.73`, `trend` starting at `0.41`, `total_briefs: 147`, `confirmed_count: 107`. If the numbers drift, the narration breaks.
 - [ ] **4. Webhook returns a brief in <90s.** Time the curl: `time curl -sS -X POST https://causal-oncall-856589756095.us-central1.run.app/webhook/dynatrace-problem -H "content-type: application/json" -d @tests/fixtures/incidents/payment_latency_spike.json -o /dev/null`. Should land <10s on warm container.
 - [ ] **5. Brief shape matches narration.** The response JSON's top hypothesis must be `db_pool_exhaustion` (score ~0.83), top recommendation must contain "Roll back deploy v412". If the model drifts (it shouldn't — demo wiring is deterministic), the narration's specific numbers go stale.

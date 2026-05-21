@@ -141,10 +141,7 @@ class SlackNotifier:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": (
-                            f"*#{hyp.rank} · {hyp.title}*  "
-                            f"`score {hyp.score:.2f}`"
-                        ),
+                        "text": (f"*#{hyp.rank} · {hyp.title}*  " f"`score {hyp.score:.2f}`"),
                     },
                 }
             )
@@ -153,13 +150,10 @@ class SlackNotifier:
                 ev_lines = []
                 for ev in hyp.supporting_evidence[:4]:
                     ev_lines.append(
-                        f"• `{ev.specialist}` "
-                        f"(conf {ev.confidence:.0%}) — {ev.summary}"
+                        f"• `{ev.specialist}` " f"(conf {ev.confidence:.0%}) — {ev.summary}"
                     )
                 if len(hyp.supporting_evidence) > 4:
-                    ev_lines.append(
-                        f"• _…and {len(hyp.supporting_evidence) - 4} more findings_"
-                    )
+                    ev_lines.append(f"• _…and {len(hyp.supporting_evidence) - 4} more findings_")
                 blocks.append(
                     {
                         "type": "section",
@@ -212,9 +206,7 @@ class SlackNotifier:
             f"_schema v{Brief.SCHEMA_VERSION}_",
         ]
         if base_url:
-            footer_parts.append(
-                f"<{base_url}/trace/{brief.problem_id}|View live trace>"
-            )
+            footer_parts.append(f"<{base_url}/trace/{brief.problem_id}|View live trace>")
         blocks.append(
             {
                 "type": "context",

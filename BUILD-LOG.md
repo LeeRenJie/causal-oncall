@@ -831,3 +831,60 @@ cd causal-oncall
 - **Dynatrace OAuth client still not created.** Inherited from W4-S1. Until it lands, the live demo runs entirely on the in-process fakes. SUBMISSION-CHECKLIST.md flags this as a non-blocker (the 4 wow moments all render) but encourages flipping before submission if the user has time.
 - **No CI gate on documentation files.** A typo in SCRIPT.md (wrong URL, stale numbers) would not fail any test. Documentation lives outside the coverage gate by construction; a future slice could add a `pytest tests/integration/test_demo_script_urls.py` that asserts every URL in SCRIPT.md returns 2xx, but it's out of W4-S2 prep scope.
 
+
+### W4-S5 — landing page + brief-as-cards + warmup + sponsor footer — 2026-05-21
+
+**Plan-locked entry:** Strategist brief "W4-S5 — Demo polish trifecta". Last frontend slice before submission; all UI work, no new backend logic.
+
+**Built:**
+- `src/causal_oncall/landing.py` (110 LOC) — new module hiding the static-HTML lookup for `GET /` and `GET /grail-event/{id}`, plus `build_warmup_status()` for the lightweight `GET /warmup` endpoint. Mirrors the W3-S5 `dashboard.py` separation-of-concerns pattern (testable Python; HTML is data).
+- `src/causal_oncall/static/landing.html` (~370 LOC HTML + inline CSS + inline JS) — hero, three demo cards (cold / memory / reject), embedded SSE trace panel reusing the W2-S2 event vocabulary, brief-as-cards renderer (`renderBriefCards` JS function) with confidence bars (green ≥0.8 / yellow ≥0.5 / red), supporting-evidence accordion, Confirm/Reject buttons, side-link bar (Slack toast / Grail event link / dashboard link), and the sponsor footer (CSS-only pill badges: Dynatrace, Google Cloud Agent Builder, Gemini 3, MongoDB Atlas, Arize Phoenix, Cloud Run).
+- `src/causal_oncall/static/grail_event.html` (~80 LOC) — static JSON viewer page for `/grail-event/{problem_id}`. Renders the CUSTOM_INFO event envelope, hypothesis summary, and a truncated brief preview as a Dynatrace-styled chrome.
+- `src/causal_oncall/static/dashboard.html` — appended a sponsor footer block (same pill badges as the landing page) so judges who land directly on `/dashboard` see the partner credits too.
+- `src/causal_oncall/app.py` — wired four new routes: `GET /` → `render_landing_page()`, `GET /warmup` → `build_warmup_status().to_dict()`, `GET /grail-event/{problem_id}` → `render_grail_event_page(problem_id)` (HTML-escaped), `POST /webhook/dynatrace-problem/{problem_id}/reject?hypothesis_key=...` → calls `Orchestrator.reject_hypothesis_and_replan` and returns the replanned brief JSON.
+- `scripts/prewarm.sh` (Bash) + `scripts/prewarm.ps1` (PowerShell) — 5-minute, 30-second-interval `/warmup` poll loop. Used in the pre-recording window.
+- `demo/SCRIPT.md` — rewrote pre-roll setup (3 tabs instead of 4; landing page replaces the trace + curl tabs) and beats 2–5 (each wow lands on a single demo-card click, not a tab-switching curl).
+- `demo/dry-run-checklist.md` — added a "Pre-recording warmup" section at the top; updated item 1 to also check `/` and `/warmup`; updated item 2 to point at the pre-warm script's output.
+
+**Decisions made:**
+- **No JS frameworks, no build step.** Vanilla HTML + inline `<script>` + SVG + CSS. Matches the W3-S5 / W2-S2 precedent and survives the corporate-proxy / CDN-blocked environments the judges' demo machine might run under. Single HTML file per page = single `GET` per page = one less thing that can flake on demo day.
+- **Sponsor footer reuses one CSS palette in two places.** The same six pill badges (Dynatrace blue, GCP blue, Gemini purple, Mongo green, Phoenix orange, Cloud Run yellow) appear on both `/` and `/dashboard`. Duplication is intentional — pages stay independently editable, and a future "ship landing-only without dashboard" cut would leave the dashboard styling intact.
+- **Warmup endpoint contract is `{warm, service_uptime_sec, ts}`.** Pinned in `WarmupStatus.to_dict` and in both unit + integration tests. The pre-warm script reads `service_uptime_sec` to detect Cloud Run rotations mid-warmup. No LLM, no MCP, no Mongo touched — by design lightweight so the warmup itself never becomes the bottleneck.
+- **Reject endpoint accepts `hypothesis_key` as a query param.** Matches the JS call site (`?hypothesis_key=...`) and keeps the URL bookmarkable for manual reproduction. The handler constructs a stub `Brief(problem_id, ..., ranked_hypotheses=())` whose only load-bearing field is `problem_id` — `reject_hypothesis_and_replan` looks the cached evidence up by that id and synthesises a fresh brief.
+- **Grail-event viewer HTML-escapes the problem id.** `render_grail_event_page` runs `html.escape(problem_id, quote=True)` before substituting into the template, so a pathological URL like `/grail-event/<script>alert(1)</script>` cannot escape the viewer chrome. Tested.
+- **HTML files stay out of the coverage gate** (they are data, not logic, per `pragma: no cover` convention and the `pyproject.toml` `omit` of `app.py`). Python wiring is 100% covered: `landing.py` is at 100% line + branch; the four new `app.py` route handlers are exercised end-to-end via `tests/integration/test_landing.py` (which the `omit` excludes from line counting but the test still proves the contract).
+
+**Tests added (12 new):**
+- `tests/unit/test_landing.py` (6 tests) — covers `render_landing_page`, `render_grail_event_page` (including XSS escape), `build_warmup_status` (default + injected `now`), and `WarmupStatus.to_dict`.
+- `tests/integration/test_landing.py` (6 tests) — `GET /` returns hero + 3 demo labels + sponsor pills; `GET /warmup` returns the JSON contract; `GET /grail-event/{id}` returns the viewer HTML with problem id interpolated; `GET /grail-event/foo&bar"baz` escapes HTML-special chars; `GET /dashboard` now contains the sponsor footer; `POST /reject` strips the rejected hypothesis from a freshly-investigated brief.
+
+**Test count + coverage:** 285 passing (up from 273), 6 skipped (unchanged — contract + e2e gates), **100% line + 100% branch coverage** (unchanged).
+
+**Test commands:**
+```
+cd causal-oncall
+.venv/Scripts/python.exe -m pytest -q                          # 285 passing, 100/100
+.venv/Scripts/python.exe -m ruff check src tests               # clean
+.venv/Scripts/python.exe -m black --check src tests            # clean
+```
+
+**Visual self-audit (`GET /` excerpt):**
+```
+$ python -c "from fastapi.testclient import TestClient; import os; os.environ['CAUSAL_ONCALL_DEV_MODE']='1'; \
+  import importlib, causal_oncall.app as a; importlib.reload(a); c=TestClient(a.app); \
+  with c: r=c.get('/'); print(r.status_code)"
+# 200
+```
+The landing HTML includes (asserted in tests):
+- `<title>Causal On-Call - the page your on-call would have built at minute 15, at minute 1</title>`
+- H1-equivalent: `<div class="title">The page your on-call would have built at minute 15. At minute 1.</div>`
+- Three demo card labels: `Run cold investigation`, `Run memory-hit (seen 14x before)`, `Run with hypothesis rejection`
+- Sponsor pills: `Dynatrace`, `Google Cloud Agent Builder`, `Gemini 3`, `MongoDB Atlas`, `Arize Phoenix`, `Cloud Run`
+
+**Demo path impact:** the narration in `demo/SCRIPT.md` is updated to use the new landing page as the central tab — three button clicks replace three tab-switches + a terminal curl. Beats 2–5 now each fire a single demo-card click and watch the embedded panels populate. Beat 6 still uses `/dashboard?demo=true` for the self-improvement curve. The dry-run checklist gains a "Pre-recording warmup" section pointing at `scripts/prewarm.sh` / `prewarm.ps1`.
+
+**Postmortem flags:**
+- **Live URL still needs redeploy.** This slice is committed but the running Cloud Run revision (`b0321e6`) does not have `/`, `/warmup`, `/grail-event/{id}`, `/reject` routes yet. Strategist must run `gcloud run deploy` after merging this commit. Until then, `https://causal-oncall-856589756095.us-central1.run.app/` still 307-redirects (or 404s) and the new SCRIPT.md narration won't work against the live URL.
+- **Cold-start budget is unchanged.** The new routes add no startup cost (no module imports beyond `landing.py`, which is pure stdlib). The pre-warm script's job is unchanged.
+- **The "Confirm hypothesis" button is a no-op visual.** Per the strategist brief — feedback is out of W4-S5 scope. A future slice could wire it to `/feedback` (already a Slack-driven endpoint) for parity, but the brief explicitly says "Confirm button is a no-op visual for now".
+

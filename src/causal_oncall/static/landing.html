@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Causal On-Call - the page your on-call would have built at minute 15, at minute 1</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117; color: #c9d1d9; margin: 0; padding: 0;
+    min-height: 100vh;
+  }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; }
+  header h1 {
+    color: #56d364; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1.6px; margin: 0 0 8px;
+  }
+  header .title {
+    font-size: 40px; font-weight: 700; margin: 0 0 16px;
+    color: #f0f6fc; letter-spacing: -0.5px;
+  }
+  header .tagline {
+    color: #8b949e; font-size: 17px; margin: 0 0 16px; max-width: 720px;
+    line-height: 1.5;
+  }
+  header .pitch {
+    color: #c9d1d9; font-size: 15px; max-width: 760px; line-height: 1.65;
+    margin: 0 0 32px;
+  }
+  .demos {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    margin: 8px 0 24px;
+  }
+  .demo-card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 18px 18px 16px; cursor: pointer; transition: border-color 120ms ease,
+      transform 120ms ease, box-shadow 120ms ease;
+    text-align: left; color: inherit; font: inherit;
+  }
+  .demo-card:hover {
+    border-color: #56d364; transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(86, 211, 100, 0.12);
+  }
+  .demo-card .ribbon {
+    color: #56d364; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1.2px; margin: 0 0 8px;
+  }
+  .demo-card .label {
+    color: #f0f6fc; font-size: 16px; font-weight: 600; margin: 0 0 6px;
+  }
+  .demo-card .sub {
+    color: #8b949e; font-size: 13px; line-height: 1.5; margin: 0;
+  }
+  .demo-card[disabled] { opacity: 0.5; cursor: progress; }
+  .panel {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 18px 20px; margin: 18px 0;
+  }
+  .panel h2 {
+    margin: 0 0 12px; color: #f0f6fc; font-size: 15px;
+    text-transform: uppercase; letter-spacing: 1.2px;
+  }
+  .panel .empty {
+    color: #6e7681; font-size: 13px; font-style: italic;
+  }
+  .trace {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .trace .row {
+    border-left: 3px solid #30363d; padding: 6px 10px; margin: 4px 0;
+    background: #0d1117; border-radius: 0 6px 6px 0;
+  }
+  .trace .row.dispatched { border-left-color: #f78166; }
+  .trace .row.completed { border-left-color: #56d364; }
+  .trace .row.brief { border-left-color: #58a6ff; background: #1c2128; }
+  .trace .row.memory { border-left-color: #d29922; }
+  .trace .row.start, .trace .row.synthesizer { border-left-color: #8b949e; }
+  .trace .row .kind {
+    color: #8b949e; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .trace .row pre {
+    margin: 4px 0 0; white-space: pre-wrap; word-break: break-all;
+    color: #c9d1d9; font-size: 11px;
+  }
+  .top-rec {
+    background: linear-gradient(135deg, #1c2128, #161b22);
+    border: 1px solid #56d364; border-radius: 10px;
+    padding: 16px 20px; margin: 8px 0 16px;
+  }
+  .top-rec .label {
+    color: #56d364; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1.4px; margin: 0 0 6px;
+  }
+  .top-rec .body {
+    color: #f0f6fc; font-size: 16px; line-height: 1.45; font-weight: 500;
+  }
+  .memory-banner {
+    background: #2d2511; border: 1px solid #d29922; border-radius: 8px;
+    padding: 12px 16px; margin: 8px 0 16px; color: #e3b341;
+    font-size: 14px;
+  }
+  .memory-banner strong { color: #f0c674; }
+  .hyp-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .hyp-card {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .hyp-card header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; margin-bottom: 8px;
+  }
+  .hyp-card .h-title {
+    color: #f0f6fc; font-size: 14px; font-weight: 600; margin: 0;
+  }
+  .hyp-card .h-rank {
+    color: #8b949e; font-weight: 700;
+  }
+  .conf-wrap {
+    background: #21262d; border-radius: 4px; height: 6px;
+    overflow: hidden; margin: 4px 0 10px;
+  }
+  .conf-bar { height: 100%; border-radius: 4px; transition: width 240ms ease; }
+  .conf-bar.high { background: #56d364; }
+  .conf-bar.mid { background: #d29922; }
+  .conf-bar.low { background: #f85149; }
+  .hyp-card .next-action {
+    color: #c9d1d9; font-size: 13px; line-height: 1.5; margin: 0 0 8px;
+  }
+  .hyp-card .next-action b { color: #f0f6fc; }
+  .accordion {
+    border-top: 1px solid #21262d; padding-top: 8px; margin-top: 8px;
+  }
+  .accordion summary {
+    cursor: pointer; color: #8b949e; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 1px; padding: 4px 0;
+    list-style: none;
+  }
+  .accordion summary::-webkit-details-marker { display: none; }
+  .accordion summary::before { content: "+ "; color: #56d364; }
+  .accordion[open] summary::before { content: "- "; }
+  .accordion ul { margin: 8px 0 4px 0; padding-left: 18px; }
+  .accordion li { color: #8b949e; font-size: 12px; line-height: 1.55; margin-bottom: 4px; }
+  .accordion li b { color: #c9d1d9; }
+  .hyp-buttons { display: flex; gap: 8px; margin-top: 10px; }
+  .btn {
+    border: 0; border-radius: 6px; padding: 6px 12px; font-size: 12px;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  .btn-confirm { background: #238636; color: #fff; }
+  .btn-confirm:hover { background: #2ea043; }
+  .btn-reject { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+  .btn-reject:hover { background: #30363d; }
+  .btn-confirm[disabled], .btn-reject[disabled] { opacity: 0.5; cursor: default; }
+
+  .side-links {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px;
+  }
+  .side-links a {
+    background: #21262d; color: #c9d1d9; padding: 7px 12px;
+    border-radius: 6px; font-size: 12px; border: 1px solid #30363d;
+  }
+  .side-links a:hover { background: #30363d; text-decoration: none; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #1c2128; border: 1px solid #56d364; color: #f0f6fc;
+    padding: 10px 16px; border-radius: 8px; font-size: 13px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); z-index: 50;
+    opacity: 0; transition: opacity 200ms ease; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  footer.sponsors {
+    margin-top: 48px; padding: 24px 0; border-top: 1px solid #21262d;
+    text-align: center;
+  }
+  footer.sponsors .pre {
+    color: #6e7681; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 1.4px; margin-bottom: 12px;
+  }
+  footer.sponsors .badges {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+  }
+  .badge {
+    padding: 6px 14px; border-radius: 999px; font-size: 12px;
+    font-weight: 600; border: 1px solid currentColor;
+  }
+  .badge-dynatrace { color: #1496ff; background: rgba(20, 150, 255, 0.08); }
+  .badge-gcp       { color: #4285f4; background: rgba(66, 133, 244, 0.08); }
+  .badge-gemini    { color: #ab7df8; background: rgba(171, 125, 248, 0.10); }
+  .badge-mongo     { color: #56d364; background: rgba(86, 211, 100, 0.10); }
+  .badge-phoenix   { color: #f78166; background: rgba(247, 129, 102, 0.10); }
+  .badge-cloudrun  { color: #fbbc04; background: rgba(251, 188, 4, 0.10); }
+
+  @media (max-width: 760px) {
+    .demos { grid-template-columns: 1fr; }
+    header .title { font-size: 30px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Causal On-Call</h1>
+  <div class="title">The page your on-call would have built at minute 15. At minute 1.</div>
+  <p class="tagline">An ADK multi-agent SRE assistant. The moment a Dynatrace problem opens, five specialists run the exact pre-mortem an experienced SRE would.</p>
+  <p class="pitch">When a P1 problem fires, the on-call's first 15 minutes are a manual scavenger hunt: dashboards, logs, deploys, Slack history. Causal On-Call converts the problem to a DQL plan, walks the Dynatrace topology, cross-references the last N deploys, runs the Davis changepoint analyzer, and produces a ranked causal hypothesis brief in under 90 seconds. It doesn't replace the on-call. It gives them a head start.</p>
+</header>
+
+<section>
+  <div class="demos">
+    <button type="button" class="demo-card" data-demo="cold">
+      <div class="ribbon">Wow #1 - cold incident</div>
+      <div class="label">Run cold investigation</div>
+      <p class="sub">Payment latency spike. No memory hit. Full 5-specialist dispatch produces a ranked brief in ~90s.</p>
+    </button>
+    <button type="button" class="demo-card" data-demo="memory">
+      <div class="ribbon">Wow #3 - memory hit</div>
+      <div class="label">Run memory-hit (seen 14x before)</div>
+      <p class="sub">DB pool exhaustion - signature already known. Short-circuits to the proven prior fix in ~3s.</p>
+    </button>
+    <button type="button" class="demo-card" data-demo="reject">
+      <div class="ribbon">Wow #2 - hypothesis rejection</div>
+      <div class="label">Run with hypothesis rejection</div>
+      <p class="sub">Deploy-induced regression. Rejects hypothesis #1 mid-flight; orchestrator visibly replans.</p>
+    </button>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Live agent trace</h2>
+  <div id="trace" class="trace">
+    <div class="empty">No investigation yet. Click a demo card to fire a webhook and watch the SSE stream below.</div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Incident brief</h2>
+  <div id="brief">
+    <div class="empty">The brief renders here as cards once the orchestrator emits brief-ready.</div>
+  </div>
+  <div id="side-links" class="side-links" style="display:none"></div>
+</section>
+
+<footer class="sponsors">
+  <div class="pre">Powered by</div>
+  <div class="badges">
+    <span class="badge badge-dynatrace">Dynatrace</span>
+    <span class="badge badge-gcp">Google Cloud Agent Builder</span>
+    <span class="badge badge-gemini">Gemini 3</span>
+    <span class="badge badge-mongo">MongoDB Atlas</span>
+    <span class="badge badge-phoenix">Arize Phoenix</span>
+    <span class="badge badge-cloudrun">Cloud Run</span>
+  </div>
+</footer>
+
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  /*
+   * W4-S5 landing page interactive script.
+   *
+   * Three demo buttons (cold / memory / reject) all follow the same
+   * pattern:
+   *   1. POST the matching fixture to /webhook/dynatrace-problem.
+   *   2. Open an EventSource on /webhook/dynatrace-problem/stream/{id}
+   *      and render trace events into the trace panel.
+   *   3. When the webhook POST resolves, render the resulting brief as
+   *      cards in the brief panel + show sidebar links.
+   *   4. For the "reject" demo, after a 2s delay, POST to
+   *      /webhook/dynatrace-problem/{id}/reject?hypothesis_key=<top>
+   *      and re-render the replanned brief.
+   *
+   * The fixtures are inlined here so the page is self-contained -- one
+   * file, one GET, no extra round-trips. Each fixture mirrors the
+   * canonical JSON under tests/fixtures/incidents/.
+   */
+  var FIXTURES = {
+    cold: {
+      problemId: "-9223372036854775807_v2",
+      displayId: "P-2026-05-17-001",
+      title: "Response time degradation",
+      status: "OPEN",
+      severityLevel: "PERFORMANCE",
+      impactLevel: "SERVICE",
+      startTime: "2026-05-17T09:30:00Z",
+      affectedEntities: [
+        { entityId: { id: "SERVICE-ABC123", type: "SERVICE" }, name: "payment-service", type: "SERVICE" }
+      ]
+    },
+    memory: {
+      problemId: "-9223372036854775806_v2",
+      displayId: "P-2026-05-12-014",
+      title: "Service unavailable: payment-service",
+      status: "OPEN",
+      severityLevel: "AVAILABILITY",
+      impactLevel: "SERVICE",
+      startTime: "2026-05-12T14:00:00Z",
+      affectedEntities: [
+        { entityId: { id: "SERVICE-ABC123", type: "SERVICE" }, name: "payment-service", type: "SERVICE" }
+      ]
+    },
+    reject: {
+      problemId: "-9223372036854775805_v2",
+      displayId: "P-2026-05-15-007",
+      title: "Failure rate increase",
+      status: "OPEN",
+      severityLevel: "ERROR",
+      impactLevel: "SERVICE",
+      startTime: "2026-05-15T11:02:00Z",
+      affectedEntities: [
+        { entityId: { id: "SERVICE-CHK456", type: "SERVICE" }, name: "checkout-service", type: "SERVICE" }
+      ]
+    }
+  };
+
+  var traceEl = document.getElementById("trace");
+  var briefEl = document.getElementById("brief");
+  var sideLinksEl = document.getElementById("side-links");
+  var toastEl = document.getElementById("toast");
+  var currentEventSource = null;
+  var currentProblemId = null;
+
+  function resetPanels() {
+    traceEl.innerHTML = '<div class="empty">Investigation starting&hellip;</div>';
+    briefEl.innerHTML = '<div class="empty">Awaiting orchestrator&hellip;</div>';
+    sideLinksEl.style.display = "none";
+    sideLinksEl.innerHTML = "";
+    if (currentEventSource) {
+      try { currentEventSource.close(); } catch (e) { /* noop */ }
+      currentEventSource = null;
+    }
+  }
+
+  function appendTraceRow(kind, data) {
+    if (traceEl.querySelector(".empty")) {
+      traceEl.innerHTML = "";
+    }
+    var cls = "row";
+    if (kind === "specialist-dispatched") cls += " dispatched";
+    else if (kind === "specialist-completed") cls += " completed";
+    else if (kind === "brief-ready") cls += " brief";
+    else if (kind === "memory-short-circuit" || kind === "memory-prior-hypothesis") cls += " memory";
+    else if (kind === "orchestrator-started") cls += " start";
+    else if (kind === "synthesizer-started") cls += " synthesizer";
+    var div = document.createElement("div");
+    div.className = cls;
+    div.innerHTML =
+      '<span class="kind">' + kind + '</span>' +
+      '<pre>' + JSON.stringify(data, null, 2) + "</pre>";
+    traceEl.appendChild(div);
+  }
+
+  function startTrace(problemId) {
+    var src = new EventSource("/webhook/dynatrace-problem/stream/" + encodeURIComponent(problemId));
+    [
+      "orchestrator-started", "specialist-dispatched", "specialist-completed",
+      "synthesizer-started", "brief-ready", "memory-short-circuit",
+      "memory-prior-hypothesis", "error"
+    ].forEach(function (k) {
+      src.addEventListener(k, function (ev) {
+        var parsed;
+        try { parsed = JSON.parse(ev.data); } catch (e) { parsed = { raw: ev.data }; }
+        appendTraceRow(k, parsed);
+        if (k === "brief-ready") { src.close(); }
+      });
+    });
+    src.onerror = function () { /* server may have closed cleanly after brief-ready */ };
+    return src;
+  }
+
+  function confidenceClass(score) {
+    if (score >= 0.8) return "high";
+    if (score >= 0.5) return "mid";
+    return "low";
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  /*
+   * Renders the brief returned by the webhook POST as a card stack:
+   *   - Memory-hit banner (if from_memory)
+   *   - Top recommendation banner
+   *   - One card per ranked hypothesis with confidence bar + accordion
+   * The Confirm button is a no-op visual; the Reject button calls back
+   * into /reject and re-renders the replanned brief.
+   */
+  function renderBriefCards(brief) {
+    briefEl.innerHTML = "";
+
+    if (brief.from_memory) {
+      var occurrences = 14;
+      if (brief.ranked_hypotheses && brief.ranked_hypotheses[0]) {
+        var t = brief.ranked_hypotheses[0].title || "";
+        var m = t.match(/seen\s+(\d+)x/i);
+        if (m) { occurrences = parseInt(m[1], 10); }
+      }
+      var memBanner = document.createElement("div");
+      memBanner.className = "memory-banner";
+      memBanner.innerHTML =
+        "<strong>Pattern matched</strong> &middot; seen " + occurrences +
+        "x before. Showing the historical confirmed fix.";
+      briefEl.appendChild(memBanner);
+    }
+
+    if (brief.top_recommendation) {
+      var topBox = document.createElement("div");
+      topBox.className = "top-rec";
+      topBox.innerHTML =
+        '<div class="label">Top recommendation</div>' +
+        '<div class="body">' + escapeHtml(brief.top_recommendation) + "</div>";
+      briefEl.appendChild(topBox);
+    }
+
+    var grid = document.createElement("div");
+    grid.className = "hyp-grid";
+
+    var hyps = brief.ranked_hypotheses || [];
+    if (!hyps.length) {
+      var empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No hypotheses returned.";
+      briefEl.appendChild(empty);
+    }
+
+    hyps.forEach(function (h) {
+      var card = document.createElement("div");
+      card.className = "hyp-card";
+      var score = typeof h.score === "number" ? h.score : 0;
+      var pct = Math.round(score * 100);
+      var cls = confidenceClass(score);
+
+      var supporting = "";
+      var fullHyp = findFullHypothesis(brief, h.key);
+      if (fullHyp && fullHyp.supporting_evidence && fullHyp.supporting_evidence.length) {
+        supporting = '<ul>' + fullHyp.supporting_evidence.map(function (ev) {
+          return "<li><b>" + escapeHtml(ev.specialist || "specialist") +
+            "</b> (conf " + Number(ev.confidence || 0).toFixed(2) + ") &mdash; " +
+            escapeHtml(ev.summary || "") + "</li>";
+        }).join("") + "</ul>";
+      } else {
+        supporting = '<ul><li>No structured evidence list available in this payload.</li></ul>';
+      }
+
+      card.innerHTML =
+        '<header>' +
+          '<p class="h-title"><span class="h-rank">#' + h.rank + '</span> &middot; ' +
+            escapeHtml(h.title || h.key) + '</p>' +
+          '<span style="color:#8b949e;font-size:12px">score ' + (score).toFixed(2) + '</span>' +
+        '</header>' +
+        '<div class="conf-wrap"><div class="conf-bar ' + cls +
+          '" style="width:' + pct + '%"></div></div>' +
+        '<p class="next-action"><b>Next action:</b> ' +
+          escapeHtml((fullHyp && fullHyp.next_action) || brief.top_recommendation || "") + '</p>' +
+        '<details class="accordion">' +
+          '<summary>Supporting evidence</summary>' +
+          supporting +
+        '</details>' +
+        '<div class="hyp-buttons">' +
+          '<button type="button" class="btn btn-confirm" data-key="' + escapeHtml(h.key) +
+            '">Confirm hypothesis</button>' +
+          '<button type="button" class="btn btn-reject" data-key="' + escapeHtml(h.key) +
+            '">Reject hypothesis</button>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+    briefEl.appendChild(grid);
+
+    grid.querySelectorAll(".btn-confirm").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.disabled = true; btn.textContent = "Confirmed";
+        showToast("Hypothesis confirmed (visual only - feedback channel disabled in demo).");
+      });
+    });
+    grid.querySelectorAll(".btn-reject").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        rejectHypothesis(btn.dataset.key);
+      });
+    });
+
+    sideLinksEl.style.display = "flex";
+    sideLinksEl.innerHTML = "";
+    var slack = document.createElement("a");
+    slack.href = "#"; slack.textContent = "View Slack post";
+    slack.addEventListener("click", function (e) {
+      e.preventDefault();
+      showToast("Check #causal-oncall-briefs in the demo workspace.");
+    });
+    sideLinksEl.appendChild(slack);
+
+    var grail = document.createElement("a");
+    grail.href = "/grail-event/" + encodeURIComponent(brief.problem_id || currentProblemId);
+    grail.target = "_blank"; grail.rel = "noopener";
+    grail.textContent = "View Dynatrace Grail event";
+    sideLinksEl.appendChild(grail);
+
+    var dash = document.createElement("a");
+    dash.href = "/dashboard?demo=true"; dash.target = "_blank"; dash.rel = "noopener";
+    dash.textContent = "Open in dashboard";
+    sideLinksEl.appendChild(dash);
+  }
+
+  function findFullHypothesis(brief, key) {
+    /* The webhook response's ranked_hypotheses array is the summary; the
+       full Hypothesis (with supporting_evidence) is reconstructable from
+       the markdown but not from the JSON. We reuse whatever fields exist. */
+    if (!brief.ranked_hypotheses) return null;
+    for (var i = 0; i < brief.ranked_hypotheses.length; i++) {
+      if (brief.ranked_hypotheses[i].key === key) {
+        return brief.ranked_hypotheses[i];
+      }
+    }
+    return null;
+  }
+
+  function showToast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add("show");
+    setTimeout(function () { toastEl.classList.remove("show"); }, 2400);
+  }
+
+  function fireWebhook(payload) {
+    return fetch("/webhook/dynatrace-problem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (r) {
+      if (!r.ok) { throw new Error("webhook failed: " + r.status); }
+      return r.json();
+    });
+  }
+
+  function rejectHypothesis(key) {
+    if (!currentProblemId) return;
+    showToast("Rejecting '" + key + "' and replanning...");
+    fetch(
+      "/webhook/dynatrace-problem/" + encodeURIComponent(currentProblemId) +
+        "/reject?hypothesis_key=" + encodeURIComponent(key),
+      { method: "POST" }
+    ).then(function (r) {
+      if (!r.ok) { throw new Error("reject failed: " + r.status); }
+      return r.json();
+    }).then(function (brief) {
+      appendTraceRow("orchestrator-replanned", { rejected: key });
+      renderBriefCards(brief);
+      showToast("Replanned without '" + key + "'.");
+    }).catch(function (err) {
+      showToast("Replan failed: " + err.message);
+    });
+  }
+
+  function runDemo(kind) {
+    resetPanels();
+    var payload = FIXTURES[kind];
+    currentProblemId = payload.problemId;
+    startTrace(currentProblemId);
+    fireWebhook(payload).then(function (brief) {
+      renderBriefCards(brief);
+      if (kind === "reject") {
+        setTimeout(function () {
+          var top = brief.ranked_hypotheses && brief.ranked_hypotheses[0];
+          if (top) { rejectHypothesis(top.key); }
+        }, 2000);
+      }
+    }).catch(function (err) {
+      briefEl.innerHTML = '<div class="empty">Investigation failed: ' +
+        escapeHtml(err.message) + "</div>";
+    });
+  }
+
+  document.querySelectorAll(".demo-card").forEach(function (card) {
+    card.addEventListener("click", function () {
+      var kind = card.dataset.demo;
+      if (FIXTURES[kind]) { runDemo(kind); }
+    });
+  });
+})();
+</script>
+</body>
+</html>
