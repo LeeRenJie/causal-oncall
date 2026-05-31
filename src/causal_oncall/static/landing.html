@@ -1239,7 +1239,7 @@
           escapeHtml((fullHyp && fullHyp.next_action) || brief.top_recommendation || "") + '</p>' +
         '<details class="evidence-accordion">' +
           '<summary><span>Supporting evidence</span>' +
-          '<span class="evidence-count">' + evidence.length + ' findings</span></summary>' +
+          '<span class="evidence-count">' + evidence.length + (evidence.length === 1 ? ' finding' : ' findings') + '</span></summary>' +
           '<ul class="evidence-rows">' + evRowsHtml + '</ul>' +
         '</details>' +
         '<div class="hyp-buttons">' +
