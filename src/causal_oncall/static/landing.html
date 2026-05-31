@@ -1039,17 +1039,27 @@
       summary = "replanned, rejected " + (data.rejected || "(n/a)");
     } else if (kind === "error") {
       sp = "orchestrator";
-      summary = "error: " + (data.message || data.error || "unknown");
+      // Only surface errors that carry a real message. Empty/transport
+      // error events (e.g. an EventSource reconnect blip) return null so
+      // the caller can skip rendering a meaningless "error: unknown" line.
+      var detail = data.message || data.error;
+      if (!detail) { return null; }
+      summary = "error: " + detail;
     }
     return { specialist: sp, summary: summary };
   }
 
   function appendTraceLine(kind, data) {
+    var info = describeEvent(kind, data);
+    // describeEvent returns null for empty/noise events (e.g. a bare
+    // error with no message). Skip rendering so the trace never shows
+    // meaningless "error: unknown" lines.
+    if (!info) { return; }
+
     // Remove the .live class from the previous last line.
     var prev = traceStream.querySelector(".trace-line.live");
     if (prev) prev.classList.remove("live");
 
-    var info = describeEvent(kind, data);
     var line = document.createElement("div");
     line.className = "trace-line live";
     line.innerHTML =
@@ -1110,6 +1120,20 @@
   function startTrace(problemId) {
     revealTracePanel();
     var src = new EventSource("/webhook/dynatrace-problem/stream/" + encodeURIComponent(problemId));
+    // Once the trace is finished (brief-ready received, or the server
+    // closed the completed stream), we must NOT let the browser auto-
+    // reconnect. EventSource fires `onerror` when the server ends the
+    // response; without this flag it would silently reconnect every few
+    // seconds, re-render the trace, and spam noise. The flag makes
+    // onerror a hard close after completion, and a single concise
+    // message before completion.
+    var finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      try { src.close(); } catch (e) { /* noop */ }
+      markTraceDone();
+    }
     [
       "orchestrator-started", "specialist-dispatched", "specialist-completed",
       "synthesizer-started", "brief-ready", "memory-short-circuit",
@@ -1120,12 +1144,25 @@
         try { parsed = JSON.parse(ev.data); } catch (e) { parsed = { raw: ev.data }; }
         appendTraceLine(k, parsed);
         if (k === "brief-ready") {
-          src.close();
-          markTraceDone();
+          finish();
         }
       });
     });
-    src.onerror = function () { /* server closes cleanly after brief-ready */ };
+    src.onerror = function () {
+      // After brief-ready the server closed cleanly: close for good so the
+      // browser never reconnects.
+      if (finished) {
+        try { src.close(); } catch (e) { /* noop */ }
+        return;
+      }
+      // Genuine failure before any brief-ready: show ONE concise line and
+      // stop. The webhook still returns the brief synchronously, so the
+      // brief panel renders regardless of the trace stream.
+      try { src.close(); } catch (e) { /* noop */ }
+      finished = true;
+      appendTraceLine("error", { message: "trace stream unavailable; brief shown below" });
+      markTraceDone();
+    };
     return src;
   }
 

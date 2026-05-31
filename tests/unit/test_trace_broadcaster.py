@@ -171,3 +171,161 @@ def test_remove_subscriber_keeps_problem_when_other_subscribers_remain():
     # The other subscriber survives — problem_id stays in the map.
     assert bus.subscriber_count("P-1") == 1
     assert "P-1" in bus._subscribers
+
+
+# ---------------------------------------------------------------------- #
+# Replay buffer — the demo-mode SSE race fix.
+#
+# In demo mode the orchestrator runs synchronously inside the webhook POST
+# and publishes every TraceEvent BEFORE the browser EventSource finishes
+# connecting. A late subscriber must still receive the full buffered
+# sequence ending in the terminal `brief-ready`, then the stream closes.
+# ---------------------------------------------------------------------- #
+
+
+async def test_subscribe_after_publish_replays_buffered_events():
+    """A subscriber that attaches AFTER events were published still gets them."""
+    bus = TraceBroadcaster()
+    # Publish with NO subscriber attached (worst-case race).
+    bus.publish("P-1", TraceEvent(kind="orchestrator-started", data={}))
+    bus.publish("P-1", TraceEvent(kind="specialist-dispatched", data={"name": "triage"}))
+
+    out: list[TraceEvent] = []
+
+    async def collect_two() -> None:
+        async for ev in bus.subscribe("P-1"):
+            out.append(ev)
+            if len(out) == 2:
+                break
+
+    await asyncio.wait_for(collect_two(), timeout=1.0)
+    assert [e.kind for e in out] == ["orchestrator-started", "specialist-dispatched"]
+
+
+async def test_subscribe_after_full_run_replays_then_completes_on_brief_ready():
+    """Late subscriber to a completed problem gets the whole sequence, then the stream ends."""
+    bus = TraceBroadcaster()
+    # Whole investigation runs synchronously with nobody listening.
+    bus.publish("P-1", TraceEvent(kind="orchestrator-started", data={}))
+    bus.publish("P-1", TraceEvent(kind="specialist-dispatched", data={"name": "triage"}))
+    bus.publish("P-1", TraceEvent(kind="specialist-completed", data={"name": "triage"}))
+    bus.publish("P-1", TraceEvent(kind="synthesizer-started", data={}))
+    bus.publish("P-1", TraceEvent(kind="brief-ready", data={"hypothesis_count": 3}))
+
+    async def collect_all() -> list[TraceEvent]:
+        out: list[TraceEvent] = []
+        async for ev in bus.subscribe("P-1"):
+            out.append(ev)
+        return out
+
+    # No break in the consumer: the generator must self-terminate after the
+    # terminal event, otherwise this wait_for would hang.
+    got = await asyncio.wait_for(collect_all(), timeout=1.0)
+    assert [e.kind for e in got] == [
+        "orchestrator-started",
+        "specialist-dispatched",
+        "specialist-completed",
+        "synthesizer-started",
+        "brief-ready",
+    ]
+    # A completed problem leaves no live subscriber behind.
+    assert bus.subscriber_count("P-1") == 0
+
+
+async def test_live_brief_ready_terminates_stream_without_close():
+    """When brief-ready arrives live (subscriber connected first), the stream still ends."""
+    bus = TraceBroadcaster()
+
+    async def collect_all() -> list[TraceEvent]:
+        out: list[TraceEvent] = []
+        async for ev in bus.subscribe("P-1"):
+            out.append(ev)
+        return out
+
+    consumer = asyncio.create_task(collect_all())
+    await _wait_for_subscriber(bus, "P-1")
+    bus.publish("P-1", TraceEvent(kind="orchestrator-started", data={}))
+    bus.publish("P-1", TraceEvent(kind="brief-ready", data={"hypothesis_count": 1}))
+    # Generator returns on the live brief-ready — no close() needed.
+    got = await asyncio.wait_for(consumer, timeout=1.0)
+    assert [e.kind for e in got] == ["orchestrator-started", "brief-ready"]
+    assert bus.subscriber_count("P-1") == 0
+
+
+async def test_replay_then_live_events_for_subscriber_mid_run():
+    """A subscriber attaching mid-run replays buffered events, then streams live ones."""
+    bus = TraceBroadcaster()
+    bus.publish("P-1", TraceEvent(kind="orchestrator-started", data={}))
+
+    out: list[TraceEvent] = []
+
+    async def collect_three() -> None:
+        async for ev in bus.subscribe("P-1"):
+            out.append(ev)
+            if len(out) == 3:
+                break
+
+    consumer = asyncio.create_task(collect_three())
+    await _wait_for_subscriber(bus, "P-1")
+    # These arrive live, after the replayed orchestrator-started.
+    bus.publish("P-1", TraceEvent(kind="specialist-dispatched", data={"name": "triage"}))
+    bus.publish("P-1", TraceEvent(kind="specialist-completed", data={"name": "triage"}))
+    await asyncio.wait_for(consumer, timeout=1.0)
+    assert [e.kind for e in out] == [
+        "orchestrator-started",
+        "specialist-dispatched",
+        "specialist-completed",
+    ]
+
+
+def test_buffer_is_bounded_to_the_ring_size():
+    """The per-problem ring drops the oldest events once it is full."""
+    bus = TraceBroadcaster(buffer_size=3)
+    for i in range(5):
+        bus.publish("P-1", TraceEvent(kind="specialist-dispatched", data={"i": i}))
+    buffered = list(bus._buffers["P-1"])
+    assert len(buffered) == 3
+    # Only the last three survive (i = 2, 3, 4).
+    assert [e.data["i"] for e in buffered] == [2, 3, 4]
+
+
+def test_lru_eviction_drops_oldest_problem_buffers():
+    """Beyond the problem cap, the least-recently-used buffer is evicted."""
+    bus = TraceBroadcaster(max_problems=2)
+    bus.publish("P-1", TraceEvent(kind="orchestrator-started", data={}))
+    bus.publish("P-2", TraceEvent(kind="orchestrator-started", data={}))
+    # Touch P-1 so P-2 becomes the least-recently-used.
+    bus.publish("P-1", TraceEvent(kind="specialist-dispatched", data={}))
+    # Third distinct problem evicts the LRU (P-2).
+    bus.publish("P-3", TraceEvent(kind="orchestrator-started", data={}))
+    assert set(bus._buffers.keys()) == {"P-1", "P-3"}
+    assert "P-2" not in bus._buffers
+
+
+def test_lru_eviction_clears_completed_marker_for_evicted_problem():
+    """Evicting a completed problem also drops its terminal marker."""
+    bus = TraceBroadcaster(max_problems=1)
+    bus.publish("P-1", TraceEvent(kind="brief-ready", data={}))
+    assert "P-1" in bus._completed
+    # A new problem evicts P-1 entirely.
+    bus.publish("P-2", TraceEvent(kind="orchestrator-started", data={}))
+    assert "P-1" not in bus._buffers
+    assert "P-1" not in bus._completed
+
+
+async def test_subscribe_to_completed_evicted_problem_blocks_for_live_events():
+    """After eviction a problem behaves like a fresh one: replay empty, stream live."""
+    bus = TraceBroadcaster(max_problems=1)
+    bus.publish("P-1", TraceEvent(kind="brief-ready", data={}))
+    bus.publish("P-2", TraceEvent(kind="orchestrator-started", data={}))  # evicts P-1
+
+    async def first_event() -> TraceEvent:
+        async for ev in bus.subscribe("P-1"):
+            return ev
+        raise AssertionError("subscription closed without yielding")
+
+    consumer = asyncio.create_task(first_event())
+    await _wait_for_subscriber(bus, "P-1")  # proves it did NOT complete on empty replay
+    bus.publish("P-1", TraceEvent(kind="orchestrator-started", data={"sentinel": "ok"}))
+    got = await asyncio.wait_for(consumer, timeout=1.0)
+    assert got.data["sentinel"] == "ok"

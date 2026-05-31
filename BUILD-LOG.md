@@ -970,3 +970,20 @@ credible #1 hypothesis ("Thread-pool starvation ...") with a real action.
 Tests: 294 total (285 + 9 new serializer tests), 294 passing, 6 skipped,
 100% line + 100% branch. ruff + black clean. Webhook contract change is
 additive only. Cloud Run NOT redeployed (strategist handles deploy).
+
+### W4-S9 — fix live-trace SSE race (per-problem replay buffer) 2026-05-31
+
+**Commit:** (this commit)
+
+**Built:** Fixed the intermittent "orchestrator error: unknown" spam + stuck-on-"streaming" trace panel on the landing page. Root cause confirmed: in DEMO_MODE the orchestrator runs synchronously inside the webhook POST and publishes every TraceEvent to the (fire-and-forget, unbuffered) TraceBroadcaster BEFORE the browser EventSource finishes connecting. A late subscriber missed every event including the terminal brief-ready; the stream idled; EventSource fired onerror (rendered as "error: unknown") and auto-reconnected forever. SSE-connects-first won the coin-flip; SSE-connects-second lost. Three-part fix: (A) TraceBroadcaster now keeps a bounded per-problem_id replay ring buffer (deque maxlen=64) with an OrderedDict LRU cap (256 problems) and a `_completed` terminal-marker set; `publish()` also buffers; `subscribe()` snapshots the buffer + completion state BEFORE registering as a live subscriber, replays buffered events first, then either completes (problem already ended in brief-ready) or streams live ones, self-terminating when a live brief-ready arrives. (B) `stream_sse_for_problem` needed no change — terminate-after-brief-ready is now driven by subscribe() returning; measured stream close <50ms in demo mode, far under Cloud Run idle timeout, so no keepalive needed. (C) landing.html: `describeEvent()` returns null for empty error events; `appendTraceLine()` skips null (no more "error: unknown"); `startTrace()` uses a `finished` flag so brief-ready closes cleanly, post-completion onerror hard-closes (no reconnect), and pre-completion onerror shows ONE concise "trace stream unavailable; brief shown below" line then closes. Status pill flips streaming -> complete on brief-ready.
+
+**Decisions made (deviations from PLAN):**
+- TraceBroadcaster public surface unchanged (publish / subscribe / subscriber_count / close); buffering + LRU are internal (deep module preserved). One new internal helper `_buffer_event`.
+- `subscribe()` snapshots buffer-then-registers (not register-then-snapshot) to avoid double-delivering the boundary event; safe because buffer-append and queue fan-out both happen under the single-threaded event loop.
+- Did not touch Gemini routing, Slack, Mongo, Dynatrace wiring, the synchronous webhook contract, or the other demos.
+
+**Test count + coverage:** 302 passing (was 294; +8 broadcaster cases: replay-after-publish, replay-then-complete-on-brief-ready, live-brief-ready-terminates, replay-then-live mid-run, ring-buffer bound, LRU eviction, completed-marker eviction, subscribe-to-evicted-problem), 6 skipped (creds-gated). 100% line + 100% branch held (trace_broadcaster.py: 76 stmts / 26 branch / 0 miss / 0 partial). ruff + black clean. No em dashes / no hex in landing.html.
+
+**Local worst-case race E2E** (uvicorn DEMO_MODE port 8123, webhook fired FIRST then SSE subscribed):
+- cold: orchestrator-started, (specialist-dispatched, specialist-completed) x5, synthesizer-started, brief-ready — 13 events, stream closed in 0.006s.
+- memory: orchestrator-started, memory-short-circuit, brief-ready — 3 events, stream closed in 0.015s.
