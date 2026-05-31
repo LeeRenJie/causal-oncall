@@ -96,24 +96,26 @@
   .section { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
 
   /* -------- Hero -------- */
-  .hero { padding: 104px 32px 80px; max-width: 1180px; margin: 0 auto; }
+  .hero { padding: 120px 32px 52px; max-width: 1180px; margin: 0 auto; }
   .hero-overline {
     font-family: var(--font-mono);
-    font-size: var(--text-sm);
+    font-size: var(--text-xs);
     color: var(--text-muted);
-    letter-spacing: 0.04em;
-    margin: 0 0 32px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin: 0 0 40px;
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     opacity: 0;
   }
   .hero-overline .pulse-dot {
-    width: 8px; height: 8px; border-radius: 50%;
+    width: 7px; height: 7px; border-radius: 50%;
     background: var(--accent);
     box-shadow: 0 0 0 0 var(--accent-soft);
     animation: pulse-ring 1800ms ease-out infinite;
   }
+  .hero-overline .sep { color: var(--border); }
   @keyframes pulse-ring {
     0%   { box-shadow: 0 0 0 0 var(--accent-soft); }
     70%  { box-shadow: 0 0 0 8px oklch(78% 0.18 145 / 0); }
@@ -121,123 +123,194 @@
   }
   .hero h1 {
     font-family: var(--font-sans);
-    font-size: var(--text-7xl);
+    font-size: clamp(2.7rem, 6.2vw, 4.5rem);
     font-weight: 700;
-    letter-spacing: -0.025em;
-    line-height: 1.04;
-    margin: 0 0 32px;
+    letter-spacing: -0.032em;
+    line-height: 1.0;
+    margin: 0 0 28px;
     color: var(--text);
-    max-width: 22ch;
+    max-width: 15ch;
     opacity: 0;
   }
+  .hero h1 .payoff { color: var(--accent); }
   .hero-lead {
     font-size: var(--text-xl);
     color: var(--text-muted);
     font-weight: 400;
-    line-height: 1.5;
-    max-width: 60ch;
-    margin: 0 0 40px;
+    line-height: 1.55;
+    max-width: 56ch;
+    margin: 0 0 48px;
     opacity: 0;
   }
-  .hero-cta {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    font-family: var(--font-mono);
-    font-size: var(--text-base);
-    color: var(--text);
-    background: transparent;
-    border: 1px solid var(--border);
-    padding: 14px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background 150ms ease, border-color 150ms ease;
-    opacity: 0;
-  }
-  .hero-cta:hover { background: var(--surface); border-color: var(--text-muted); }
-  .hero-cta .arrow { transition: transform 200ms ease; }
-  .hero-cta:hover .arrow { transform: translateY(2px); }
 
-  /* -------- Demo cards -------- */
-  .demos-wrap { padding: 64px 32px 24px; max-width: 1180px; margin: 0 auto; }
-  .demos-eyebrow {
+  /* Proof ledger: artifact facts only, mono, hairline-divided. Not a
+     hero-metric template (no single dominant number, no gradient). */
+  .proof {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    opacity: 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .proof-item {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 18px 36px 18px 0;
+    margin-right: 36px;
+    border-right: 1px solid var(--border);
+  }
+  .proof-item:last-child { border-right: none; margin-right: 0; padding-right: 0; }
+  .proof-num {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .proof-num.proof-text { font-size: 1.3rem; letter-spacing: -0.01em; }
+  .proof-cap {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  /* -------- Incident bar (frames the demos as one real problem) -------- */
+  .incident-bar {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--text-muted);
-    margin: 0 0 24px;
+  }
+  .incident-bar .incident-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--danger);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 0 oklch(70% 0.17 25 / 0.4);
+    animation: pulse-red 2000ms ease-out infinite;
+  }
+  @keyframes pulse-red {
+    0%   { box-shadow: 0 0 0 0 oklch(70% 0.17 25 / 0.4); }
+    70%  { box-shadow: 0 0 0 7px oklch(70% 0.17 25 / 0); }
+    100% { box-shadow: 0 0 0 0 oklch(70% 0.17 25 / 0); }
+  }
+  .incident-bar .incident-id { color: var(--text); }
+  .incident-bar strong { color: var(--danger); font-weight: 600; }
+
+  /* -------- Demo cards: one featured primary + two supporting -------- */
+  .demos-wrap { padding: 24px 32px 24px; max-width: 1180px; margin: 0 auto; }
+  .demos-head {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin: 0 0 20px;
     letter-spacing: 0.02em;
   }
   .demos {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 24px;
+    grid-template-columns: 1.7fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 14px;
   }
   .demo-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 28px 24px 24px;
+    border-radius: 8px;
     cursor: pointer;
     text-align: left;
     color: inherit;
     font: inherit;
     display: flex;
     flex-direction: column;
-    gap: 14px;
     opacity: 0;
     transform: translateY(16px);
     transition: background 180ms ease, border-color 180ms ease;
   }
   .demo-card:hover {
     background: var(--surface-2);
-    border-color: oklch(36% 0.015 250);
+    border-color: oklch(38% 0.02 250);
   }
   .demo-card[data-busy="true"] { opacity: 0.55; cursor: progress; }
-  .demo-card .icon {
-    color: var(--accent);
-    width: 32px;
-    height: 32px;
+
+  .demo-card.primary {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    padding: 32px 32px 28px;
+    justify-content: space-between;
+    gap: 28px;
   }
+  .demo-card.secondary {
+    grid-column: 2;
+    padding: 22px 24px;
+    gap: 9px;
+  }
+  .demo-card.secondary:nth-of-type(2) { grid-row: 1; }
+  .demo-card.secondary:nth-of-type(3) { grid-row: 2; }
+
+  .demo-card .demo-body { display: flex; flex-direction: column; gap: 13px; }
+
+  .demo-card .icon { color: var(--accent); }
+  .demo-card.primary .icon { width: 36px; height: 36px; }
+  .demo-card.secondary .icon { width: 22px; height: 22px; }
+
   .demo-card .label {
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     margin: 0;
   }
   .demo-card .title {
-    font-size: var(--text-3xl);
     font-weight: 600;
     color: var(--text);
     margin: 0;
-    line-height: 1.2;
+    line-height: 1.18;
     letter-spacing: -0.01em;
   }
+  .demo-card.primary .title { font-size: var(--text-3xl); }
+  .demo-card.secondary .title { font-size: var(--text-xl); }
   .demo-card .desc {
     font-size: var(--text-base);
     color: var(--text-muted);
     margin: 0;
     line-height: 1.55;
-    max-width: 38ch;
   }
+  .demo-card.primary .desc { max-width: 42ch; }
+  .demo-card.secondary .desc { font-size: var(--text-sm); line-height: 1.5; }
   .demo-card .run-cta {
     align-self: flex-start;
-    margin-top: 8px;
     background: var(--accent);
     color: oklch(14% 0.01 250);
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     font-weight: 600;
-    padding: 8px 14px;
+    padding: 10px 18px;
     border: none;
-    border-radius: 4px;
+    border-radius: 5px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
+  }
+  .demo-card.secondary .run-cta {
+    background: transparent;
+    color: var(--accent);
+    padding: 2px 0 0;
+    font-size: var(--text-xs);
+    letter-spacing: 0.04em;
   }
   .demo-card[data-busy="true"] .run-cta { background: var(--surface-2); color: var(--text-muted); }
+  .demo-card.secondary[data-busy="true"] .run-cta { background: transparent; }
 
   /* -------- Trace panel -------- */
   .trace-section { padding: 16px 32px 8px; max-width: 1180px; margin: 0 auto; }
@@ -615,21 +688,29 @@
 
   /* Responsive */
   @media (max-width: 880px) {
-    .hero { padding: 64px 24px 48px; }
-    .hero h1 { font-size: 3rem; max-width: 18ch; }
+    .hero { padding: 72px 24px 40px; }
+    .hero h1 { max-width: 18ch; }
     .hero-lead { font-size: var(--text-base); }
+    .proof-item { padding-right: 24px; margin-right: 24px; }
+    .incident-bar { padding-left: 24px; padding-right: 24px; }
     .demos-wrap, .trace-section, .brief-section { padding-left: 24px; padding-right: 24px; }
-    .demos { grid-template-columns: 1fr; gap: 16px; }
+    .demos { grid-template-columns: 1fr; grid-template-rows: none; gap: 12px; }
+    .demo-card.primary, .demo-card.secondary { grid-column: 1; grid-row: auto; }
+    .demo-card.primary { gap: 18px; }
     .sponsor-footer { padding-left: 24px; padding-right: 24px; }
+  }
+  @media (max-width: 460px) {
+    .proof-item:nth-child(2) { border-right: none; margin-right: 0; }
   }
 
   /* Reduced motion: collapse all animation to instant final states. */
   @media (prefers-reduced-motion: reduce) {
-    .hero-overline, .hero h1, .hero-lead, .hero-cta,
+    .hero-overline, .hero h1, .hero-lead, .proof,
     .demo-card, .hyp-card, .trace-line {
       opacity: 1 !important; transform: none !important;
     }
-    .pulse-dot, .trace-status.live::before, .trace-line.live::after {
+    .pulse-dot, .trace-status.live::before, .trace-line.live::after,
+    .incident-bar .incident-dot {
       animation: none !important;
     }
   }
@@ -641,7 +722,7 @@
   html.motion-failed .hero-overline,
   html.motion-failed .hero h1,
   html.motion-failed .hero-lead,
-  html.motion-failed .hero-cta,
+  html.motion-failed .proof,
   html.motion-failed .demo-card,
   html.motion-failed .hyp-card,
   html.motion-failed .trace-line {
@@ -656,69 +737,95 @@
 <!-- ============================================================== -->
 <section class="hero" aria-label="Hero">
   <div class="hero-overline" id="hero-overline">
-    <span>v1.0</span>
-    <span>·</span>
     <span class="pulse-dot" aria-hidden="true"></span>
-    <span>live</span>
+    <span>Dynatrace track</span>
+    <span class="sep">/</span>
+    <span>Google ADK</span>
+    <span class="sep">/</span>
+    <span>live on Cloud Run</span>
   </div>
 
   <h1 id="hero-h1">
-    An ADK multi-agent SRE assistant. Gives your on-call the page they would have built at minute 15, at minute 1.
+    Your on&#8209;call's minute&#8209;15 page, <span class="payoff">at minute 1.</span>
   </h1>
 
   <p class="hero-lead" id="hero-lead">
-    When a Dynatrace problem opens, six agents (orchestrator, five specialists,
-    synthesizer) run the exact pre-mortem an experienced SRE would: DQL composition,
-    deploy correlation, topology blast-radius, anomaly windows, vulnerability
-    cross-check. They return a ranked causal hypothesis brief, posted to Slack and
-    written back to Grail, in about 90 seconds.
+    When a Dynatrace problem opens, an orchestrator agent dispatches five
+    specialists and a synthesizer to run the pre-mortem an experienced SRE would,
+    then posts a ranked causal brief to Slack and writes it back to Grail in about
+    ninety seconds.
   </p>
 
-  <a class="hero-cta" id="hero-cta" href="#demos">
-    <span>Run a live investigation</span>
-    <span class="arrow" aria-hidden="true">↓</span>
-  </a>
+  <div class="proof" id="hero-proof">
+    <div class="proof-item">
+      <span class="proof-num"><span data-countup="5">5</span></span>
+      <span class="proof-cap">specialists</span>
+    </div>
+    <div class="proof-item">
+      <span class="proof-num"><span data-countup="317">317</span></span>
+      <span class="proof-cap">tests</span>
+    </div>
+    <div class="proof-item">
+      <span class="proof-num"><span data-countup="100">100</span>%</span>
+      <span class="proof-cap">line + branch coverage</span>
+    </div>
+    <div class="proof-item">
+      <span class="proof-num proof-text">Apache&#8209;2.0</span>
+      <span class="proof-cap">open source</span>
+    </div>
+  </div>
 </section>
 
 <!-- ============================================================== -->
 <!-- DEMO CARDS                                                      -->
 <!-- ============================================================== -->
+<div class="incident-bar" aria-label="Active problem">
+  <span class="incident-dot" aria-hidden="true"></span>
+  <span><span class="incident-id">P-2026-05-17-001</span>
+    &nbsp;/&nbsp; Response time degradation
+    &nbsp;/&nbsp; payment-service
+    &nbsp;/&nbsp; <strong>OPEN</strong></span>
+</div>
+
 <section class="demos-wrap" id="demos" aria-label="Live demos">
-  <p class="demos-eyebrow">Three live demos. Each fires the real webhook.</p>
+  <p class="demos-head">Pick how the agent responds. Each card fires the real webhook.</p>
   <div class="demos">
 
-    <!-- #1 Cold investigation -->
-    <button type="button" class="demo-card" data-demo="cold">
-      <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
-           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
-           aria-hidden="true">
-        <!-- Snowflake: 6 axes through centre -->
-        <line x1="16" y1="3"  x2="16" y2="29"/>
-        <line x1="5"  y1="9"  x2="27" y2="23"/>
-        <line x1="5"  y1="23" x2="27" y2="9"/>
-        <!-- Snowflake tip serifs -->
-        <polyline points="13,5  16,7  19,5"/>
-        <polyline points="13,27 16,25 19,27"/>
-        <polyline points="6,11 7,13 9,12"/>
-        <polyline points="23,20 25,19 26,21"/>
-        <polyline points="9,20 7,19 6,21"/>
-        <polyline points="23,12 25,13 26,11"/>
-        <!-- Clock face inset -->
-        <circle cx="16" cy="16" r="5"/>
-        <line x1="16" y1="16" x2="16" y2="13"/>
-        <line x1="16" y1="16" x2="18.5" y2="16"/>
-      </svg>
-      <p class="label">Wow #1 · cold</p>
-      <p class="title">Run cold investigation</p>
-      <p class="desc">
-        Open problem on payment-service. Agent runs all 5 specialists,
-        returns a ranked brief in about 90 seconds.
-      </p>
-      <span class="run-cta">Run <span aria-hidden="true">→</span></span>
+    <!-- #1 Cold investigation (featured) -->
+    <button type="button" class="demo-card primary" data-demo="cold">
+      <div class="demo-body">
+        <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <!-- Snowflake: 6 axes through centre -->
+          <line x1="16" y1="3"  x2="16" y2="29"/>
+          <line x1="5"  y1="9"  x2="27" y2="23"/>
+          <line x1="5"  y1="23" x2="27" y2="9"/>
+          <!-- Snowflake tip serifs -->
+          <polyline points="13,5  16,7  19,5"/>
+          <polyline points="13,27 16,25 19,27"/>
+          <polyline points="6,11 7,13 9,12"/>
+          <polyline points="23,20 25,19 26,21"/>
+          <polyline points="9,20 7,19 6,21"/>
+          <polyline points="23,12 25,13 26,11"/>
+          <!-- Clock face inset -->
+          <circle cx="16" cy="16" r="5"/>
+          <line x1="16" y1="16" x2="16" y2="13"/>
+          <line x1="16" y1="16" x2="18.5" y2="16"/>
+        </svg>
+        <p class="label">Wow #1 · cold start</p>
+        <p class="title">Run the full investigation</p>
+        <p class="desc">
+          No prior memory. The orchestrator dispatches all five specialists,
+          ranks the evidence, and returns a causal brief with one recommended
+          action. Watch the agent trace stream live below.
+        </p>
+      </div>
+      <span class="run-cta">Run investigation <span aria-hidden="true">→</span></span>
     </button>
 
-    <!-- #2 Memory hit -->
-    <button type="button" class="demo-card" data-demo="memory">
+    <!-- #3 Memory hit (supporting) -->
+    <button type="button" class="demo-card secondary" data-demo="memory">
       <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
            aria-hidden="true">
@@ -727,17 +834,17 @@
         <!-- Check mark inside top -->
         <polyline points="12,11 15,14 20,9"/>
       </svg>
-      <p class="label">Wow #3 · memory hit</p>
-      <p class="title">Run memory-hit (seen 14x before)</p>
+      <p class="label">Wow #3 · memory</p>
+      <p class="title">Seen 14x before</p>
       <p class="desc">
-        Same problem shape we resolved 14 times in Q1. Agent short-circuits,
-        surfaces the proven fix, posts to Slack.
+        A Mongo Atlas vector match short-circuits the dispatch and surfaces the
+        proven fix in seconds.
       </p>
       <span class="run-cta">Run <span aria-hidden="true">→</span></span>
     </button>
 
-    <!-- #3 Hypothesis rejection -->
-    <button type="button" class="demo-card" data-demo="reject">
+    <!-- #2 Hypothesis rejection (supporting) -->
+    <button type="button" class="demo-card secondary" data-demo="reject">
       <svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor"
            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
            aria-hidden="true">
@@ -752,11 +859,11 @@
         <!-- Junction node -->
         <circle cx="14" cy="16" r="1.5" fill="currentColor"/>
       </svg>
-      <p class="label">Wow #2 · rejection + replan</p>
-      <p class="title">Run with hypothesis rejection</p>
+      <p class="label">Wow #2 · replan</p>
+      <p class="title">Reject and replan</p>
       <p class="desc">
-        Reject the top hypothesis mid-investigation; agent re-plans without it.
-        The moment that distinguishes agent from chatbot.
+        Reject the top hypothesis mid-investigation; the agent re-plans against
+        the next-best evidence. What separates agent from chatbot.
       </p>
       <span class="run-cta">Run <span aria-hidden="true">→</span></span>
     </button>
@@ -924,16 +1031,37 @@
     vulnerability: "V", vuln: "V", synthesizer: "S", orchestrator: "O"
   };
 
+  // ----- Proof-ledger count-up (rAF, independent of motion.dev) -----
+  function countUp() {
+    if (reduce) return;  // static final values already in the DOM
+    document.querySelectorAll("[data-countup]").forEach(function (el) {
+      var target = parseInt(el.getAttribute("data-countup"), 10);
+      if (isNaN(target)) return;
+      var dur = 900, started = null;
+      el.textContent = "0";
+      function step(ts) {
+        if (started === null) started = ts;
+        var p = Math.min(1, (ts - started) / dur);
+        var eased = 1 - Math.pow(1 - p, 4);  // ease-out-quart
+        el.textContent = Math.round(eased * target).toString();
+        if (p < 1) { requestAnimationFrame(step); }
+        else { el.textContent = target.toString(); }
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
   // ----- Hero mount animation -----
   function mountHero() {
     var nodes = [
       document.getElementById("hero-overline"),
       document.getElementById("hero-h1"),
       document.getElementById("hero-lead"),
-      document.getElementById("hero-cta")
+      document.getElementById("hero-proof")
     ];
     if (reduce) {
       nodes.forEach(function (n) { n.style.opacity = 1; n.style.transform = "none"; });
+      countUp();
       return;
     }
     whenMotionReady(function (m) {
@@ -945,6 +1073,7 @@
         );
       });
     });
+    countUp();
   }
 
   // ----- Demo card stagger-in on inView -----
