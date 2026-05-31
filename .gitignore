@@ -63,3 +63,10 @@ node_modules/
 # OS
 Thumbs.db
 desktop.ini
+
+# Hackathon-internal docs (kept local, not shown in public repo)
+BUILD-LOG.md
+DESIGN.md
+DEVPOST.md
+PRODUCT.md
+demo/
