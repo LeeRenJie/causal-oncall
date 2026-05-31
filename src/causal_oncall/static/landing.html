@@ -12,6 +12,17 @@
   // Signal that motion is ready so the boot script can replay any queued effects.
   window.dispatchEvent(new CustomEvent("motion-ready"));
 </script>
+<script>
+  // Motion-failure fallback: if motion.dev never loads (CDN blocked, ESM
+  // not supported, network slow), force every animated element visible
+  // after 1.8s so the page is still usable. Without this, demo cards
+  // remain at opacity:0 and the user clicks dead air.
+  setTimeout(function () {
+    if (!window.__motion) {
+      document.documentElement.classList.add("motion-failed");
+    }
+  }, 1800);
+</script>
 <style>
   :root {
     color-scheme: dark;
@@ -595,6 +606,20 @@
     .pulse-dot, .trace-status.live::before, .trace-line.live::after {
       animation: none !important;
     }
+  }
+
+  /* Motion-failure fallback: motion.dev never loaded within 1.8s.
+     Force every animated element visible so the page is still usable
+     (the demo cards in particular: without this they sit at opacity:0
+     and the user clicks dead air). */
+  html.motion-failed .hero-overline,
+  html.motion-failed .hero h1,
+  html.motion-failed .hero-lead,
+  html.motion-failed .hero-cta,
+  html.motion-failed .demo-card,
+  html.motion-failed .hyp-card,
+  html.motion-failed .trace-line {
+    opacity: 1 !important; transform: none !important;
   }
 </style>
 </head>
@@ -1272,14 +1297,42 @@
   }
 
   function runDemo(kind) {
-    resetPanels();
+    // Immediate click-receipt: flip the CTA text + toast BEFORE any async
+    // work, so the user sees feedback even on Cloud Run cold-start latency
+    // or motion.dev failures.
+    showToast("Investigation started, agents dispatching...");
     var card = document.querySelector('.demo-card[data-demo="' + kind + '"]');
-    if (card) card.dataset.busy = "true";
+    if (card) {
+      card.dataset.busy = "true";
+      var cta = card.querySelector(".run-cta");
+      if (cta && !cta.dataset.originalText) {
+        cta.dataset.originalText = cta.textContent;
+      }
+      if (cta) { cta.textContent = "Running..."; }
+    }
+    resetPanels();
     var payload = FIXTURES[kind];
+    if (!payload) {
+      showToast("Unknown demo fixture: " + kind);
+      if (card) card.dataset.busy = "false";
+      return;
+    }
     currentProblemId = payload.problemId;
-    currentEventSource = startTrace(currentProblemId);
+    try {
+      currentEventSource = startTrace(currentProblemId);
+    } catch (e) {
+      // SSE failure is non-fatal: the webhook still returns the brief
+      // synchronously. Log + continue.
+      console.warn("startTrace failed; continuing without live trace.", e);
+    }
 
     fireWebhook(payload).then(function (brief) {
+      if (card) {
+        var cta2 = card.querySelector(".run-cta");
+        if (cta2 && cta2.dataset.originalText) {
+          cta2.textContent = cta2.dataset.originalText;
+        }
+      }
       renderBriefCards(brief);
       if (card) card.dataset.busy = "false";
       if (kind === "reject") {
@@ -1289,11 +1342,18 @@
         }, 2000);
       }
     }).catch(function (err) {
-      if (card) card.dataset.busy = "false";
+      if (card) {
+        card.dataset.busy = "false";
+        var cta3 = card.querySelector(".run-cta");
+        if (cta3 && cta3.dataset.originalText) {
+          cta3.textContent = cta3.dataset.originalText;
+        }
+      }
       briefPanel.dataset.shown = "true";
       briefContent.innerHTML =
         '<p style="color:var(--danger);font-family:var(--font-mono);font-size:var(--text-sm)">' +
         'Investigation failed: ' + escapeHtml(err.message) + '</p>';
+      showToast("Investigation failed: " + err.message);
     });
   }
 

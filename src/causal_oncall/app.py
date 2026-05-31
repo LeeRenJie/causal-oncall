@@ -350,8 +350,16 @@ async def trace_stream(problem_id: str) -> StreamingResponse:
 
 @app.get("/")  # pragma: no cover  # W4-S5 landing page (replaces 307 to /dashboard)
 async def landing() -> HTMLResponse:
-    """Render the public landing page with 3 interactive demo cards."""
-    return HTMLResponse(render_landing_page())
+    """Render the public landing page with 3 interactive demo cards.
+
+    Sets Cache-Control: no-store so a redeploy is immediately visible to
+    every browser, no hard-refresh needed. The HTML body is small (~45KB)
+    so the bandwidth cost is negligible.
+    """
+    return HTMLResponse(
+        render_landing_page(),
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 @app.get("/warmup")  # pragma: no cover  # W4-S5 pre-warm endpoint
