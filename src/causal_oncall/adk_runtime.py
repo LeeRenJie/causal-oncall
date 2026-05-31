@@ -243,9 +243,9 @@ def _strip_json_fences(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```"):
         # Drop the opening fence line (``` or ```json) and the closing ```.
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
+        # The startswith check above already guarantees a leading fence line,
+        # so we drop lines[0] unconditionally.
+        lines = stripped.splitlines()[1:]
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         stripped = "\n".join(lines).strip()
