@@ -929,3 +929,44 @@ cd causal-oncall
 - **Live URL still on v1.** This commit is local; Cloud Run revision `causal-oncall-00010-m6n` still serves the v1 landing. Strategist should redeploy after merge.
 - **motion.dev pinned to `@latest`.** Spec says fall back to a version pin if the URL breaks; verified working with current upstream (Nov 2025+). If a future build breaks because motion ships a v13 with API churn, pin to `motion@12.0.0` in the script tag and re-run the suite.
 - **The "Confirm hypothesis" button is still a no-op visual** (same flag as W4-S5).
+
+## W4-S8 demo polish fix pass — 2026-05-31
+
+Commit: `4a1cabd` (amended to carry this log entry)
+Built: Fixed 6 rendered-output bugs that made a working demo look broken to a
+judge. The landing client was already correct but starved of data; most fixes
+are server-side payload enrichment plus two small client/CSS tweaks.
+
+Decisions:
+- BUG 1 (0 findings under every hypothesis): added `supporting_evidence` array
+  per hypothesis in the webhook + reject JSON. Extracted a covered deep module
+  `hypothesis_serialization.py` (`serialize_ranked_hypotheses`,
+  `humanize_hypothesis_key`) tested to 100%, rather than inline-serializing in
+  the pragma-excluded app.py.
+- BUG 2 (bare cve_exposure reject): gave `_demo_wiring.demo_llm_call` canned
+  SRE-grade prose for every key the specialists can emit (cve_exposure ->
+  "Thread-pool starvation from a synchronous downstream call" with a real
+  action: make the downstream call async / add a bounded timeout). The
+  serializer also humanizes any title that equals its raw key as a backstop.
+- BUG 3a (run-together trace): added `.trace-line .sp` min-width + `.msg`
+  spacing in landing CSS. BUG 3b: orchestrator specialist-dispatched /
+  specialist-completed events now carry `specialist` (mirrors `name`); the
+  client describeEvent already renders it. Orchestrator trace unit tests
+  updated to assert the new `specialist` + `hypothesis_count` fields.
+- BUG 4 (`&middot;` literal text): replaced with a literal U+00B7 in
+  dashboard.html; verified landing.html has no entity-as-textContent.
+- BUG 5 (brief ready "0 hypotheses"): brief-ready event now carries
+  `hypothesis_count`; client reads it (falls back to old array length).
+- BUG 6: verified renderBriefCards / appendTraceLine / describeEvent are
+  clean — no duplicate appends/cases. Skipped as clean (earlier read stale).
+- Also normalized the anomaly_window evidence summary (em dash -> colon) so
+  the now-exposed evidence reads crisp in the brief cards.
+
+Verification: booted CAUSAL_ONCALL_DEMO_MODE locally; curl of
+payment_latency_spike returns supporting_evidence per hypothesis, and the
+reject of db_pool_exhaustion on deploy_induced_regression lands a titled,
+credible #1 hypothesis ("Thread-pool starvation ...") with a real action.
+
+Tests: 294 total (285 + 9 new serializer tests), 294 passing, 6 skipped,
+100% line + 100% branch. ruff + black clean. Webhook contract change is
+additive only. Cloud Run NOT redeployed (strategist handles deploy).
