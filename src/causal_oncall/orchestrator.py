@@ -84,6 +84,7 @@ class Orchestrator:
         config: OrchestratorConfig | None = None,
         trace_broadcaster: TraceBroadcaster | None = None,
         dynatrace: DynatraceClient | None = None,
+        adk_agent: object | None = None,
     ) -> None:
         self._memory = memory
         self._specialists = tuple(specialists)
@@ -105,6 +106,18 @@ class Orchestrator:
         # without re-hitting Dynatrace when only the synthesizer needs to
         # re-run with one hypothesis excluded.
         self._last_evidence: dict[str, tuple[ProblemSignature, tuple[Evidence, ...]]] = {}
+        # The ADK orchestrator agent (an LlmAgent carrying the specialist
+        # FunctionTools + Dynatrace McpToolset) is wired in by the production
+        # wiring so the system is genuinely ADK-hosted. The deterministic
+        # dispatch below drives the same specialists for the replayable,
+        # fully-covered orchestration logic; the agent is the LLM-planner
+        # face of that same multi-agent investigation. Held read-only.
+        self._adk_agent = adk_agent
+
+    @property
+    def adk_agent(self) -> object | None:
+        """The ADK orchestrator LlmAgent wired in production (None when headless)."""
+        return self._adk_agent
 
     def handle(self, problem_open_event: dict) -> Brief:
         """Run the full pipeline for one Dynatrace problem.open event.

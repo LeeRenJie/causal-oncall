@@ -130,10 +130,11 @@ class Curator:
         self._memory = memory
         self._config = config or CuratorConfig()
         # Gemini client is dependency-injectable so unit tests stay
-        # hermetic. Production wiring constructs the real Vertex client
-        # lazily on the first ``synthesize`` call.
-        self._gemini: GeminiSynthesisClient = gemini_client or _LazyVertexGeminiClient(
-            model_id=self._config.gemini_model_id
+        # hermetic. Production wiring runs pattern synthesis *through the
+        # ADK runtime* (LlmAgent + Runner) — no direct google.genai call —
+        # via ``AdkPatternSynthesisClient``, constructed lazily here.
+        self._gemini: GeminiSynthesisClient = gemini_client or _build_adk_pattern_client(
+            self._config.gemini_model_id
         )
 
     # ------------------------------------------------------------------ #
@@ -459,37 +460,21 @@ def _build_memory_store_from_env(  # pragma: no cover  # env-driven boot
     return MemoryStore(cfg)
 
 
-class _LazyVertexGeminiClient:  # pragma: no cover  # vertex-backed; contract-only
-    """Production Gemini Pro client; constructed but not connected until first call.
+def _build_adk_pattern_client(  # pragma: no cover  # ADK runtime glue; unit tests inject a fake
+    model_id: str,
+) -> GeminiSynthesisClient:
+    """Production pattern-synthesis client running through the ADK runtime.
 
-    Real Vertex AI calls are exercised by the cassette + manual scripts;
-    the unit suite never touches this class.
+    Returns an ``AdkPatternSynthesisClient`` (LlmAgent + Runner over a
+    Gemini model id) so the Curator's synthesis goes through ADK rather
+    than a direct ``google.genai.generate_content`` call. The unit suite
+    never reaches this — it injects ``FakeGeminiClient`` — so the thin
+    construction glue is pragma-excluded, consistent with the app.py /
+    env-driven boot exclusions.
     """
+    from causal_oncall.adk_runtime import AdkPatternSynthesisClient
 
-    def __init__(self, *, model_id: str) -> None:
-        self._model_id = model_id
-        self._last_input_tokens = 0
-        self._last_output_tokens = 0
-
-    def synthesize_pattern(self, prompt: str) -> dict[str, Any]:
-        from google import genai
-
-        client = genai.Client(
-            vertexai=True,
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
-            location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
-        )
-        response = client.models.generate_content(model=self._model_id, contents=prompt)
-        usage = getattr(response, "usage_metadata", None)
-        if usage is not None:
-            self._last_input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-            self._last_output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
-        import json as _json
-
-        return _json.loads(response.text)
-
-    def token_counts(self) -> tuple[int, int]:
-        return (self._last_input_tokens, self._last_output_tokens)
+    return AdkPatternSynthesisClient(model=model_id)
 
 
 if (

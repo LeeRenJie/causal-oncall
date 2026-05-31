@@ -652,13 +652,17 @@ def test_curator_defaults_config_when_omitted(tmp_path):
     assert curator._config.min_cluster_size == 2
 
 
-def test_curator_default_gemini_client_is_lazy_vertex(tmp_path):
-    """No gemini_client passed -> the lazy Vertex client is wired."""
-    from causal_oncall.curator import _LazyVertexGeminiClient
+def test_curator_default_gemini_client_runs_through_the_adk_runtime(tmp_path):
+    """No gemini_client passed -> the ADK-runtime-backed synthesis client is wired.
+
+    Compliance: production pattern synthesis goes through an ADK LlmAgent +
+    Runner (``AdkPatternSynthesisClient``), not a direct google.genai call.
+    """
+    from causal_oncall.adk_runtime import AdkPatternSynthesisClient
 
     memory = FakeMemoryStore()
     curator = Curator(memory=memory)
-    assert isinstance(curator._gemini, _LazyVertexGeminiClient)
+    assert isinstance(curator._gemini, AdkPatternSynthesisClient)
 
 
 def test_synthesize_falls_back_to_memory_store_few_shot_dir(tmp_path):

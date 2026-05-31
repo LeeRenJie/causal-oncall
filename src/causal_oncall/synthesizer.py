@@ -11,7 +11,6 @@ for prose generation; every other LLM call is a specialist deciding
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -230,23 +229,27 @@ class Synthesizer:
             lines.append(f"- hypothesis_key={key!r}, evidence_count={len(items)}")
         return "\n".join(lines)
 
-    def _default_llm_call(self, prompt: str) -> dict:  # pragma: no cover  # vertex-backed
-        """Real LLM call. Production-only; tests override via monkeypatch.
+    def _default_llm_call(self, prompt: str) -> dict:  # pragma: no cover  # ADK-runtime-backed
+        """Real LLM call — routed through the ADK runtime, not direct genai.
 
-        Kept tiny here: tests substitute via ``monkeypatch.setattr(self, "_llm_call", ...)``
-        so the production Gemini glue can grow without changing the test surface.
+        Production builds the prose step as a Gemini-backed ADK ``LlmAgent``
+        and run it via ``Runner`` (see ``adk_runtime.AdkLlmSynthesisCall``),
+        which the production wiring assigns to ``self._llm_call``. This
+        default is the lazy fall-back when the wiring did not inject the
+        ADK call object: it constructs the same ADK-backed call on demand
+        so there is *no* direct ``google.genai.generate_content`` path left
+        in the synthesis flow. Tests override ``_llm_call`` via monkeypatch
+        and never reach this branch.
         """
-        from google import genai  # late import to keep test imports cheap
+        from causal_oncall.adk_runtime import AdkLlmSynthesisCall
 
-        client = genai.Client(
-            vertexai=True,
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
-            location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
-        )
-        response = client.models.generate_content(
+        call = AdkLlmSynthesisCall(
             model=self._config.gemini_model_id,
-            contents=prompt,
+            agent_name="causal_oncall_synthesizer",
+            instruction=(
+                "You are the Synthesizer for Causal On-Call. Given the "
+                "problem + grouped evidence, return ONLY a JSON object of the "
+                'form {"hypotheses": {key: {title, next_action}}}.'
+            ),
         )
-        import json as _json
-
-        return _json.loads(response.text)
+        return call(prompt)

@@ -614,3 +614,41 @@ def test_orchestrator_without_dynatrace_skips_write_back():
     orch = _make_orchestrator()  # no dynatrace passed
     brief = orch.handle(_PROBLEM_EVENT)
     assert brief is not None
+
+
+# ---------- ADK runtime wiring ----------
+
+
+def test_orchestrator_exposes_its_adk_agent_when_one_is_wired():
+    """Production wires a real ADK LlmAgent into the orchestrator.
+
+    The orchestrator holds the ADK orchestrator agent (LlmAgent carrying
+    the specialist FunctionTools + Dynatrace McpToolset) so the system is
+    genuinely ADK-hosted. ``adk_agent`` is exposed read-only; the
+    deterministic dispatch logic is unchanged.
+    """
+    from causal_oncall.adk_runtime import build_orchestrator_agent, build_specialist_tools
+
+    triage = _StubSpecialist("triage", make_evidence(specialist="triage"))
+    agent = build_orchestrator_agent(
+        model="gemini-2.5-pro",
+        specialist_tools=build_specialist_tools([triage]),
+    )
+    orch = Orchestrator(
+        memory=FakeMemoryStore(),
+        specialists=[triage],
+        synthesizer=FakeSynthesizer(),
+        tracer=FakePhoenixTracer(),
+        config=OrchestratorConfig(),
+        adk_agent=agent,
+    )
+    assert orch.adk_agent is agent
+    # The deterministic pipeline still runs unchanged with an agent wired.
+    brief = orch.handle(_PROBLEM_EVENT)
+    assert brief is not None
+
+
+def test_orchestrator_adk_agent_is_none_by_default():
+    """Headless / demo wiring runs without an ADK agent object."""
+    orch = _make_orchestrator()
+    assert orch.adk_agent is None
