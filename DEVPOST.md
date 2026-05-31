@@ -1,4 +1,4 @@
-# Causal On-Call — Devpost submission
+# Causal On-Call: Devpost submission
 
 **Track:** Dynatrace
 **Live URL:** <https://causal-oncall-856589756095.us-central1.run.app/dashboard?demo=true>
@@ -6,7 +6,7 @@
 
 ## Inspiration
 
-Every on-call engineer's first fifteen minutes look the same. A P1 problem fires. You jump between dashboards, logs, deploy history, and Slack threads. Fifteen minutes later you have a working theory the data already supported. The pattern matching is a senior SRE skill — it just needs to be made available to the rest of the team without putting the senior on the page. So we asked: what if the first message in the incident channel was already the page the senior would have built by hand at minute fifteen?
+Every on-call engineer's first fifteen minutes look the same. A P1 problem fires. You jump between dashboards, logs, deploy history, and Slack threads. Fifteen minutes later you have a working theory the data already supported. The pattern matching is a senior SRE skill, it just needs to be made available to the rest of the team without putting the senior on the page. So we asked: what if the first message in the incident channel was already the page the senior would have built by hand at minute fifteen?
 
 ## What it does
 

@@ -199,4 +199,4 @@ Slice-by-slice audit trail in `BUILD-LOG.md`. Every entry records what shipped v
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) for the full text.
+Apache License 2.0. See [LICENSE](LICENSE) for the full text.
