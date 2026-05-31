@@ -213,7 +213,15 @@ class Orchestrator:
         # change this without verifying the Dynatrace rate-limit ceiling.
         out: list[Evidence] = []
         for specialist in self._specialists:
-            self._emit(signature.problem_id, "specialist-dispatched", {"name": specialist.name})
+            # ``specialist`` mirrors ``name`` so the live trace UI can render
+            # the agent's real name (triage, topology, ...) instead of a
+            # generic "specialist" placeholder. ``name`` is kept for the
+            # existing SSE consumers + tests.
+            self._emit(
+                signature.problem_id,
+                "specialist-dispatched",
+                {"name": specialist.name, "specialist": specialist.name},
+            )
             evidence = specialist.investigate(signature, prior_hypothesis=prior_hypothesis)
             out.append(evidence)
             self._emit(
@@ -221,6 +229,7 @@ class Orchestrator:
                 "specialist-completed",
                 {
                     "name": specialist.name,
+                    "specialist": specialist.name,
                     "stance": evidence.stance,
                     "hypothesis_key": evidence.hypothesis_key,
                     "confidence": evidence.confidence,
@@ -284,6 +293,9 @@ class Orchestrator:
                     "top_hypothesis_title": top.title if top else None,
                     "top_recommendation": brief.top_recommendation,
                     "memory_short_circuit": brief.memory_short_circuit,
+                    # Count so the trace line can say "brief ready (N hypotheses)"
+                    # instead of reading a hypotheses array the event omits.
+                    "hypothesis_count": len(brief.ranked_hypotheses),
                 },
             ),
         )

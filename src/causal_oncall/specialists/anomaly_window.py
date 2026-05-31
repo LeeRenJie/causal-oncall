@@ -49,7 +49,7 @@ class AnomalyWindowSpecialist(Specialist):
                 confidence = 0.7
                 stance = "supports"
                 summary = (
-                    f"Detected {anomalies} metric deviation(s) — response-time anomalies "
+                    f"Detected {anomalies} metric deviation(s): response-time anomalies "
                     "in the anomaly window."
                 )
             return Evidence(

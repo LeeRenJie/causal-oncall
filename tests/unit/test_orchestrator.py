@@ -363,6 +363,10 @@ def test_orchestrator_emits_lifecycle_events_for_each_specialist():
     completed = [d for _pid, k, d in captured if k == "specialist-completed"]
     assert [d["name"] for d in dispatched] == ["triage", "topology"]
     assert {d["name"] for d in completed} == {"triage", "topology"}
+    # The live trace UI reads ``specialist`` (mirrors ``name``) so it can
+    # render the real agent name rather than a generic placeholder.
+    assert [d["specialist"] for d in dispatched] == ["triage", "topology"]
+    assert {d["specialist"] for d in completed} == {"triage", "topology"}
 
 
 def test_orchestrator_emits_memory_short_circuit_event_when_memory_hits():
@@ -409,6 +413,8 @@ def test_orchestrator_brief_ready_event_carries_top_hypothesis_when_present():
     assert len(brief_ready) == 1
     assert "top_hypothesis_key" in brief_ready[0]
     assert "top_recommendation" in brief_ready[0]
+    # The trace line renders "brief ready (N hypotheses)" off this count.
+    assert brief_ready[0]["hypothesis_count"] == 1
 
 
 def test_orchestrator_memory_hit_brief_ready_event_has_top_hypothesis():

@@ -301,7 +301,11 @@
     transform: translateY(8px);
   }
   .trace-line .ts { color: var(--text-muted); margin-right: 12px; }
-  .trace-line .sp { color: var(--accent); margin-right: 8px; }
+  .trace-line .sp {
+    color: var(--accent); margin-right: 10px;
+    display: inline-block; min-width: 7.5em;
+  }
+  .trace-line .msg { color: var(--text); margin-left: 2px; }
   .trace-line.live::after {
     content: "";
     display: inline-block;
@@ -1020,7 +1024,10 @@
       summary = "ranking hypotheses";
     } else if (kind === "brief-ready") {
       sp = "synthesizer";
-      summary = "brief ready (" + ((data.ranked_hypotheses && data.ranked_hypotheses.length) || 0) + " hypotheses)";
+      var hypCount = (typeof data.hypothesis_count === "number")
+        ? data.hypothesis_count
+        : ((data.ranked_hypotheses && data.ranked_hypotheses.length) || 0);
+      summary = "brief ready (" + hypCount + " hypotheses)";
     } else if (kind === "memory-short-circuit") {
       sp = "memory";
       summary = "pattern matched, short-circuiting (sim " + (data.similarity || "?") + ")";

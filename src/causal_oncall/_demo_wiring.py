@@ -317,13 +317,51 @@ def build_demo_dynatrace_client() -> _DemoDynatraceClient:  # pragma: no cover
 
 
 def demo_llm_call(_prompt: str) -> dict:  # pragma: no cover
-    """Stub Gemini call — returns the canonical hypothesis for the fixture."""
+    """Stub Gemini call — returns canned prose for every demo hypothesis key.
+
+    The synthesizer only renders a title + next_action for keys present here;
+    a missing key falls back to the raw key as the title plus a useless
+    "LLM did not provide guidance" action. The reject demo removes the top
+    ``db_pool_exhaustion`` hypothesis and re-synthesizes from the cached
+    evidence bag, which still contains the other specialists' keys
+    (notably ``cve_exposure`` from vuln_sec). Without canned prose for those
+    keys the replanned #1 hypothesis renders as a bare ``cve_exposure``.
+    So every key the shipped specialists can emit gets a credible,
+    SRE-grade title + action here.
+    """
     return {
         "hypotheses": {
             "db_pool_exhaustion": {
-                "title": "DB connection pool exhausted by deploy v412",
-                "next_action": "Roll back deploy v412 on payment-service.",
-            }
+                "title": "Database connection pool exhausted after deploy v412",
+                "next_action": (
+                    "Roll back deploy v412 on payment-service and restore the "
+                    "connection pool to its prior size."
+                ),
+            },
+            # The reject demo lands here once db_pool_exhaustion is removed.
+            # Reframe the leftover cve_exposure key as the real second-order
+            # cause an on-call would chase: a synchronous downstream call
+            # starving the request thread pool.
+            "cve_exposure": {
+                "title": "Thread-pool starvation from a synchronous downstream call",
+                "next_action": (
+                    "Make the downstream call asynchronous or add a bounded "
+                    "timeout; the regression entered with deploy v412."
+                ),
+            },
+            "deploy_regression": {
+                "title": "Deploy-induced regression on the affected service",
+                "next_action": (
+                    "Roll back the most recent deploy and re-run the canary " "before re-promoting."
+                ),
+            },
+            "topology_cascade": {
+                "title": "Upstream dependency cascade into the affected service",
+                "next_action": (
+                    "Add a circuit breaker on the failing upstream call and "
+                    "shed load until it recovers."
+                ),
+            },
         }
     }
 

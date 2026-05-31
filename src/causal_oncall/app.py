@@ -37,6 +37,9 @@ from causal_oncall.dynatrace_client import (  # pragma: no cover
     DynatraceClient,
     DynatraceClientConfig,
 )
+from causal_oncall.hypothesis_serialization import (  # pragma: no cover
+    serialize_ranked_hypotheses,
+)
 from causal_oncall.landing import (  # pragma: no cover
     build_warmup_status,
     render_grail_event_page,
@@ -288,10 +291,7 @@ async def webhook_dynatrace_problem(request: Request) -> JSONResponse:
         "brief_url": f"/briefs/{brief.problem_id}.md",
         "trace_url": f"/trace/{brief.problem_id}",
         "top_recommendation": brief.top_recommendation,
-        "ranked_hypotheses": [
-            {"rank": h.rank, "key": h.key, "title": h.title, "score": h.score}
-            for h in brief.ranked_hypotheses
-        ],
+        "ranked_hypotheses": serialize_ranked_hypotheses(brief),
         "memory_short_circuit": brief.memory_short_circuit,
         # W3-S2: explicit fields the demo + dashboard read for the
         # "pre-flight memory hit" wow moment. Kept alongside the legacy
@@ -409,10 +409,7 @@ async def reject_hypothesis(problem_id: str, hypothesis_key: str) -> JSONRespons
             "brief_id": replanned.problem_id,
             "brief_url": f"/briefs/{replanned.problem_id}.md",
             "top_recommendation": replanned.top_recommendation,
-            "ranked_hypotheses": [
-                {"rank": h.rank, "key": h.key, "title": h.title, "score": h.score}
-                for h in replanned.ranked_hypotheses
-            ],
+            "ranked_hypotheses": serialize_ranked_hypotheses(replanned),
             "memory_short_circuit": replanned.memory_short_circuit,
             "from_memory": replanned.from_memory,
             "pattern_match_score": replanned.pattern_match_score,

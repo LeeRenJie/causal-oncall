@@ -197,7 +197,7 @@
       'up from <span class="delta">' + start + '</span> in month 1';
     document.getElementById('subtitle').textContent =
       data.total_briefs + ' briefs over ' + (data.trend_length || 30) +
-      ' days &middot; ' + data.confirmed_count + ' human-confirmed';
+      ' days · ' + data.confirmed_count + ' human-confirmed';
     renderSparkline(data.trend || []);
   }
 
