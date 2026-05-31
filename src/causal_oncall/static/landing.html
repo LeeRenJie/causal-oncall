@@ -22,6 +22,28 @@
       document.documentElement.classList.add("motion-failed");
     }
   }, 1800);
+
+  // Global error banner: any uncaught JS error (incl. early IIFE failures
+  // that would stop click handlers from binding) surfaces visibly here
+  // instead of being invisible-in-console. Judges and the user both see
+  // the error instead of staring at a dead page.
+  window.addEventListener("error", function (ev) {
+    var banner = document.getElementById("err-banner");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "err-banner";
+      banner.setAttribute("style",
+        "position:fixed;top:0;left:0;right:0;z-index:9999;" +
+        "background:oklch(30% 0.15 25);color:oklch(96% 0.01 25);" +
+        "padding:10px 16px;font-family:ui-monospace,monospace;" +
+        "font-size:12px;border-bottom:1px solid oklch(60% 0.18 25);" +
+        "white-space:pre-wrap;word-break:break-word;");
+      (document.body || document.documentElement).appendChild(banner);
+    }
+    var msg = (ev && ev.message) || "unknown error";
+    var src = (ev && ev.filename) ? " @ " + ev.filename + ":" + (ev.lineno || "?") : "";
+    banner.textContent = "[landing-js error] " + msg + src;
+  });
 </script>
 <style>
   :root {
@@ -1357,35 +1379,48 @@
     });
   }
 
-  // ----- Wire demo card clicks (with tap-scale spring) -----
-  document.querySelectorAll(".demo-card").forEach(function (card) {
-    card.addEventListener("click", function () {
-      var kind = card.dataset.demo;
-      if (!FIXTURES[kind]) return;
+  // ----- Boot: bind clicks FIRST so a mount failure doesn't kill them -----
+  function wireDemoCards() {
+    document.querySelectorAll(".demo-card").forEach(function (card) {
+      card.addEventListener("click", function () {
+        var kind = card.dataset.demo;
+        if (!FIXTURES[kind]) {
+          showToast("No fixture for demo: " + kind);
+          return;
+        }
+        if (!reduce && window.__motion) {
+          try {
+            window.__motion.animate(card, { scale: [1, 0.97, 1] },
+              { duration: 0.18, easing: window.__motion.spring({ stiffness: 200, damping: 25 }) });
+          } catch (e) { /* swallow motion errors, click still runs */ }
+        }
+        runDemo(kind);
+      });
       if (!reduce) {
-        whenMotionReady(function (m) {
-          m.animate(card, { scale: [1, 0.97, 1] }, { duration: 0.18, easing: m.spring({ stiffness: 200, damping: 25 }) });
+        card.addEventListener("mouseenter", function () {
+          if (window.__motion) {
+            try {
+              window.__motion.animate(card, { scale: 1.01 },
+                { duration: 0.15, easing: window.__motion.spring({ stiffness: 200, damping: 25 }) });
+            } catch (e) { /* swallow */ }
+          }
+        });
+        card.addEventListener("mouseleave", function () {
+          if (window.__motion) {
+            try {
+              window.__motion.animate(card, { scale: 1 },
+                { duration: 0.15, easing: window.__motion.spring({ stiffness: 200, damping: 25 }) });
+            } catch (e) { /* swallow */ }
+          }
         });
       }
-      runDemo(kind);
     });
-    if (!reduce) {
-      card.addEventListener("mouseenter", function () {
-        whenMotionReady(function (m) {
-          m.animate(card, { scale: 1.01 }, { duration: 0.15, easing: m.spring({ stiffness: 200, damping: 25 }) });
-        });
-      });
-      card.addEventListener("mouseleave", function () {
-        whenMotionReady(function (m) {
-          m.animate(card, { scale: 1 }, { duration: 0.15, easing: m.spring({ stiffness: 200, damping: 25 }) });
-        });
-      });
-    }
-  });
+  }
 
-  // ----- Boot -----
-  mountHero();
-  mountDemoCards();
+  // Wire clicks before any animation work: clicks are critical, animations are nice-to-have.
+  try { wireDemoCards(); } catch (e) { console.error("wireDemoCards failed:", e); }
+  try { mountHero(); } catch (e) { console.error("mountHero failed:", e); }
+  try { mountDemoCards(); } catch (e) { console.error("mountDemoCards failed:", e); }
 })();
 </script>
 </body>
