@@ -39,12 +39,15 @@ def test_landing_page_returns_html_with_hero_demo_buttons_and_sponsors(client: T
     body = resp.text
     # Hero — H1 + brand surface
     assert "Causal On-Call" in body  # appears in <title>
-    assert "ADK multi-agent SRE assistant" in body
-    assert "at minute 15, at minute 1." in body
-    # Three demo cards
-    assert "Run cold investigation" in body
-    assert "Run memory-hit (seen 14x before)" in body
-    assert "Run with hypothesis rejection" in body
+    assert "at minute 1." in body  # H1 payoff phrase
+    # Proof ledger — verifiable artifact facts above the fold
+    assert "specialists" in body
+    assert "line + branch coverage" in body
+    assert "Apache" in body
+    # Three demo cards (featured primary + two supporting)
+    assert "Run the full investigation" in body
+    assert "Seen 14x before" in body
+    assert "Reject and replan" in body
     # Sponsor footer pills
     assert "Dynatrace" in body
     assert "Google Cloud Agent Builder" in body

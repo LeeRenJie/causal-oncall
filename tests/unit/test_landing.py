@@ -36,12 +36,15 @@ def test_render_landing_page_contains_hero_demo_buttons_and_sponsor_footer():
     body = render_landing_page()
     # Hero copy — H1 phrasing + brand title
     assert "Causal On-Call" in body  # appears in the <title> tag
-    assert "ADK multi-agent SRE assistant" in body
-    assert "at minute 15, at minute 1." in body
-    # Three demo card labels
-    assert "Run cold investigation" in body
-    assert "Run memory-hit (seen 14x before)" in body
-    assert "Run with hypothesis rejection" in body
+    assert "at minute 1." in body  # H1 payoff phrase
+    # Proof ledger — verifiable artifact facts above the fold
+    assert "specialists" in body
+    assert "line + branch coverage" in body
+    assert "Apache" in body
+    # Three demo card titles (featured primary + two supporting)
+    assert "Run the full investigation" in body
+    assert "Seen 14x before" in body
+    assert "Reject and replan" in body
     # Sponsor footer pills (CSS only -- text + class names)
     assert "Dynatrace" in body
     assert "Google Cloud Agent Builder" in body
