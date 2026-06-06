@@ -57,6 +57,24 @@ def test_post_brief_is_idempotent_on_problem_id(monkeypatch):
     assert len(fake.posted) == 1
 
 
+def test_post_brief_bypasses_idempotency_cache_in_demo_mode(monkeypatch):
+    """In DEMO_MODE every click posts fresh, so a repeated problem_id re-posts.
+
+    The demo reuses fixed problem IDs; the production idempotency cache would
+    make a second click a silent no-op, which looks broken on a live demo.
+    """
+    monkeypatch.setenv("CAUSAL_ONCALL_DEMO_MODE", "true")
+    notifier = SlackNotifier(_cfg())
+    fake = _FakeSlack()
+    monkeypatch.setattr(notifier, "_slack", fake, raising=False)
+
+    brief = make_brief(problem_id="P-1")
+    ref1 = notifier.post_brief(brief, feedback_channel="C123")
+    ref2 = notifier.post_brief(brief, feedback_channel="C123")
+    assert len(fake.posted) == 2
+    assert ref1.message_ts != ref2.message_ts
+
+
 def test_post_brief_includes_top_recommendation_in_block_kit(monkeypatch):
     notifier = SlackNotifier(_cfg())
     fake = _FakeSlack()
