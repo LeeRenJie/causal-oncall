@@ -365,27 +365,48 @@
     padding-right: 8px;
   }
   .trace-line {
-    color: var(--text);
-    padding: 2px 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 3px 0;
     opacity: 0;
     transform: translateY(8px);
   }
-  .trace-line .ts { color: var(--text-muted); margin-right: 12px; }
-  .trace-line .sp {
-    color: var(--accent); margin-right: 10px;
-    display: inline-block; min-width: 7.5em;
+  .trace-line .ts {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+    opacity: 0.7;
   }
-  .trace-line .msg { color: var(--text); margin-left: 2px; }
-  .trace-line.live::after {
+  /* Plain-English message is the prominent part. */
+  .trace-line .msg {
+    color: var(--text);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Agent + Dynatrace source render in grey, pushed to the right. */
+  .trace-line .agent {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+    text-align: right;
+  }
+  .trace-line .agent .src { opacity: 0.7; }
+  .trace-line.live .msg::after {
     content: "";
     display: inline-block;
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--accent);
     margin-left: 8px;
+    vertical-align: middle;
     animation: pulse-ring 1400ms ease-out infinite;
+  }
+  @media (max-width: 720px) {
+    .trace-line { flex-wrap: wrap; gap: 4px 10px; }
+    .trace-line .agent { width: 100%; text-align: left; }
   }
 
   /* -------- Brief panel -------- */
@@ -1131,51 +1152,61 @@
     return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
   }
 
-  // Pull a "specialist → summary" pair out of an SSE event payload.
+  // Each specialist's friendly name + the Dynatrace source it reads from +
+  // a plain-English phrase for what it's doing and what it found. The trace
+  // shows the English; the agent + source render as a grey tag.
+  var AGENT_INFO = {
+    triage:             { name: "Triage agent",      source: "Dynatrace logs",       doing: "Scanning error logs around the incident",        done: "Assessed the error patterns" },
+    topology:           { name: "Topology agent",    source: "Dynatrace Smartscape", doing: "Mapping the blast radius across services",        done: "Mapped the downstream blast radius" },
+    deploy_correlation: { name: "Deploy agent",      source: "Dynatrace events",     doing: "Correlating recent deployments",                 done: "Correlated the recent deploys" },
+    anomaly_window:     { name: "Anomaly agent",     source: "Dynatrace metrics",    doing: "Looking for metric anomalies in the window",     done: "Found the metric anomalies" },
+    vuln_sec:           { name: "Security agent",    source: "Dynatrace security",   doing: "Checking for known vulnerabilities",             done: "Ruled out a security cause" }
+  };
+
+  function pct(conf) {
+    return (typeof conf === "number") ? Math.round(conf * 100) + "% confident" : "";
+  }
+
+  // Turn an SSE event into { agent, source, message } in plain English.
+  // agent + source render in grey; message is the prominent line.
   function describeEvent(kind, data) {
-    var sp = "orchestrator";
-    var summary = kind;
-    if (!data || typeof data !== "object") {
-      return { specialist: sp, summary: summary };
-    }
+    if (!data || typeof data !== "object") { data = {}; }
     if (kind === "orchestrator-started") {
-      sp = "orchestrator";
-      summary = "dispatching specialists for " + (data.problem_id || data.problemId || "problem");
-    } else if (kind === "specialist-dispatched") {
-      sp = data.specialist || "specialist";
-      summary = "dispatched " + sp;
-    } else if (kind === "specialist-completed") {
-      sp = data.specialist || "specialist";
-      var conf = (typeof data.confidence === "number") ? data.confidence.toFixed(2) : "n/a";
-      summary = sp + " complete (conf " + conf + ")";
-    } else if (kind === "synthesizer-started") {
-      sp = "synthesizer";
-      summary = "ranking hypotheses";
-    } else if (kind === "brief-ready") {
-      sp = "synthesizer";
-      var hypCount = (typeof data.hypothesis_count === "number")
+      return { agent: "Orchestrator", source: "Google ADK", message: "Investigation started, dispatching the specialist agents" };
+    }
+    if (kind === "specialist-dispatched") {
+      var di = AGENT_INFO[data.specialist] || { name: data.specialist || "Specialist", source: "Dynatrace", doing: "Investigating" };
+      return { agent: di.name, source: di.source, message: di.doing };
+    }
+    if (kind === "specialist-completed") {
+      var ci = AGENT_INFO[data.specialist] || { name: data.specialist || "Specialist", source: "Dynatrace", done: "Done" };
+      var c = pct(data.confidence);
+      return { agent: ci.name, source: ci.source, message: ci.done + (c ? " (" + c + ")" : "") };
+    }
+    if (kind === "synthesizer-started") {
+      return { agent: "Synthesizer", source: "Gemini", message: "Weighing the evidence and ranking the causes" };
+    }
+    if (kind === "brief-ready") {
+      var n = (typeof data.hypothesis_count === "number")
         ? data.hypothesis_count
         : ((data.ranked_hypotheses && data.ranked_hypotheses.length) || 0);
-      summary = "brief ready (" + hypCount + " hypotheses)";
-    } else if (kind === "memory-short-circuit") {
-      sp = "memory";
-      summary = "pattern matched, short-circuiting (sim " + (data.similarity || "?") + ")";
-    } else if (kind === "memory-prior-hypothesis") {
-      sp = "memory";
-      summary = "prior fix: " + (data.title || data.key || "");
-    } else if (kind === "orchestrator-replanned") {
-      sp = "orchestrator";
-      summary = "replanned, rejected " + (data.rejected || "(n/a)");
-    } else if (kind === "error") {
-      sp = "orchestrator";
-      // Only surface errors that carry a real message. Empty/transport
-      // error events (e.g. an EventSource reconnect blip) return null so
-      // the caller can skip rendering a meaningless "error: unknown" line.
+      return { agent: "Synthesizer", source: "Gemini", message: "Brief ready with " + n + " ranked " + (n === 1 ? "cause" : "causes") };
+    }
+    if (kind === "memory-short-circuit") {
+      return { agent: "Memory", source: "MongoDB Atlas", message: "Matched a known incident pattern, skipping the full investigation" };
+    }
+    if (kind === "memory-prior-hypothesis") {
+      return { agent: "Memory", source: "MongoDB Atlas", message: "Surfacing the proven fix from last time" };
+    }
+    if (kind === "orchestrator-replanned") {
+      return { agent: "Orchestrator", source: "Google ADK", message: "Hypothesis rejected, replanning against the next-best evidence" };
+    }
+    if (kind === "error") {
       var detail = data.message || data.error;
       if (!detail) { return null; }
-      summary = "error: " + detail;
+      return { agent: "Orchestrator", source: "", message: detail };
     }
-    return { specialist: sp, summary: summary };
+    return { agent: "Orchestrator", source: "Google ADK", message: kind };
   }
 
   function appendTraceLine(kind, data) {
@@ -1191,10 +1222,12 @@
 
     var line = document.createElement("div");
     line.className = "trace-line live";
+    var tag = escapeHtml(info.agent) +
+      (info.source ? ' <span class="src">via ' + escapeHtml(info.source) + "</span>" : "");
     line.innerHTML =
-      '<span class="ts">[' + nowStamp() + ']</span>' +
-      '<span class="sp">' + escapeHtml(info.specialist) + '</span>' +
-      '<span class="msg">' + escapeHtml(truncate(info.summary, 100)) + '</span>';
+      '<span class="ts">' + nowStamp() + '</span>' +
+      '<span class="msg">' + escapeHtml(truncate(info.message, 90)) + '</span>' +
+      '<span class="agent">' + tag + "</span>";
     traceStream.appendChild(line);
     traceStream.scrollTop = traceStream.scrollHeight;
 
