@@ -813,12 +813,12 @@
           <line x1="16" y1="16" x2="16" y2="13"/>
           <line x1="16" y1="16" x2="18.5" y2="16"/>
         </svg>
-        <p class="label">Wow #1 · cold start</p>
+        <p class="label">Cold start · no prior memory</p>
         <p class="title">Run the full investigation</p>
         <p class="desc">
-          No prior memory. The orchestrator dispatches all five specialists,
-          ranks the evidence, and returns a causal brief with one recommended
-          action. Watch the agent trace stream live below.
+          The orchestrator dispatches all five specialists, ranks the evidence,
+          and returns a causal brief with one recommended action. The agent's
+          plan streams live below.
         </p>
       </div>
       <span class="run-cta">Run investigation <span aria-hidden="true">→</span></span>
@@ -834,10 +834,10 @@
         <!-- Check mark inside top -->
         <polyline points="12,11 15,14 20,9"/>
       </svg>
-      <p class="label">Wow #3 · memory</p>
+      <p class="label">Memory hit</p>
       <p class="title">Seen 14x before</p>
       <p class="desc">
-        A Mongo Atlas vector match short-circuits the dispatch and surfaces the
+        A MongoDB Atlas vector match short-circuits the dispatch and returns the
         proven fix in seconds.
       </p>
       <span class="run-cta">Run <span aria-hidden="true">→</span></span>
@@ -859,11 +859,11 @@
         <!-- Junction node -->
         <circle cx="14" cy="16" r="1.5" fill="currentColor"/>
       </svg>
-      <p class="label">Wow #2 · replan</p>
+      <p class="label">Human in the loop</p>
       <p class="title">Reject and replan</p>
       <p class="desc">
-        Reject the top hypothesis mid-investigation; the agent re-plans against
-        the next-best evidence. What separates agent from chatbot.
+        Reject the top hypothesis mid-investigation. The agent re-plans against
+        the next-best evidence, and the reasoning stays auditable.
       </p>
       <span class="run-cta">Run <span aria-hidden="true">→</span></span>
     </button>
