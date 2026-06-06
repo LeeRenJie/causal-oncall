@@ -64,10 +64,25 @@ class SlackNotifier:
         self._poll_for_feedback: Any = self._default_poll_for_feedback
 
     def post_brief(self, brief: Brief, feedback_channel: str) -> MessageRef:
-        """Render the brief as Slack block-kit and post it. Returns a MessageRef."""
-        cached = self._posted_briefs.get(brief.problem_id)
-        if cached is not None:
-            return cached
+        """Render the brief as Slack block-kit and post it. Returns a MessageRef.
+
+        In DEMO_MODE the idempotency cache is bypassed so every click of a
+        demo card posts a fresh Slack message (the demo reuses fixed problem
+        IDs, and a cached no-op would make repeat/retake clicks look broken).
+        In production the cache stays active so a retried webhook never
+        double-posts the same incident.
+        """
+        import os as _os
+
+        demo_mode = _os.environ.get("CAUSAL_ONCALL_DEMO_MODE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if not demo_mode:
+            cached = self._posted_briefs.get(brief.problem_id)
+            if cached is not None:
+                return cached
 
         blocks = self._render_block_kit(brief)
         slack = self._ensure_slack()
